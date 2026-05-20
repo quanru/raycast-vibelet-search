@@ -1,0 +1,9 @@
+/node_modules
+/dist
+/coverage
+raycast-env.d.ts
+.DS_Store
+.npmrc
+.env
+.env.local
+*.log
