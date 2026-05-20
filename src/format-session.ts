@@ -1,4 +1,18 @@
-import type { SessionMessage, SessionMeta } from "./types";
+import type { SessionMessage, SessionMeta, SessionSource } from "./types";
+
+const SOURCE_LABEL: Record<SessionSource, string> = {
+  "claude-cli": "Claude Code",
+  "claude-app": "Claude App",
+  "codex-cli": "Codex CLI",
+  "codex-app": "Codex App",
+};
+
+const SOURCE_BADGE: Record<SessionSource, string> = {
+  "claude-cli": "🟠",
+  "claude-app": "🟣",
+  "codex-cli": "🟢",
+  "codex-app": "🔵",
+};
 
 /**
  * Format a single message as a markdown chunk.
@@ -34,12 +48,13 @@ export function formatSessionMarkdown(
   messages: SessionMessage[],
   options: { truncate?: number; query?: string } = {},
 ): string {
-  const sourceLabel = meta.source === "claude-code" ? "Claude Code" : "Codex";
-  const sourceBadge = meta.source === "claude-code" ? "🟠" : "🟢";
+  const sourceLabel = SOURCE_LABEL[meta.source];
+  const sourceBadge = SOURCE_BADGE[meta.source];
+  const prSuffix = meta.prUrl ? ` · [PR #${meta.prNumber ?? ""}](${meta.prUrl})` : "";
 
   const header =
     `# ${sourceBadge} ${meta.title}\n\n` +
-    `${sourceLabel} · \`${meta.projectPath}\` · ${new Date(meta.timestamp).toLocaleString()} · ${messages.length} messages\n\n` +
+    `${sourceLabel} · \`${meta.projectPath}\` · ${new Date(meta.timestamp).toLocaleString()} · ${messages.length} messages${prSuffix}\n\n` +
     `---\n\n`;
 
   const body = messages.map((m) => renderMessage(m, options)).join("\n\n");
@@ -50,7 +65,7 @@ export function formatSessionMarkdown(
  * Format a session as plain text — easier to paste into notes/docs apps that don't render markdown.
  */
 export function formatSessionPlainText(meta: SessionMeta, messages: SessionMessage[]): string {
-  const sourceLabel = meta.source === "claude-code" ? "Claude Code" : "Codex";
+  const sourceLabel = SOURCE_LABEL[meta.source];
   const lines: string[] = [
     `# ${meta.title}`,
     `Source: ${sourceLabel}`,

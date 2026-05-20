@@ -14,7 +14,7 @@ import type { SessionMessage, SessionMeta } from "./types";
 const sampleMeta: SessionMeta = {
   id: "abc-123",
   title: "Test Session",
-  source: "claude-code",
+  source: "claude-cli",
   projectPath: "/Users/me/project",
   timestamp: new Date("2026-04-10T10:00:00.000Z").getTime(),
   filePath: "/tmp/fake.jsonl",
@@ -179,7 +179,7 @@ describe("formatSessionMarkdown", () => {
   });
 
   it("uses the green badge for codex sessions", () => {
-    const codexMeta: SessionMeta = { ...sampleMeta, source: "codex" };
+    const codexMeta: SessionMeta = { ...sampleMeta, source: "codex-cli" };
     const md = formatSessionMarkdown(codexMeta, sampleMessages);
     expect(md).toContain("# 🟢");
     expect(md).toContain("Codex");

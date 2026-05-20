@@ -220,11 +220,18 @@ describe("codexAdapter.parseLine", () => {
 });
 
 describe("getAdapter", () => {
-  it("returns claudeAdapter for claude-code", () => {
-    expect(getAdapter("claude-code")).toBe(claudeAdapter);
+  it("returns claudeAdapter for claude-cli and claude-app sources", () => {
+    expect(getAdapter("claude-cli")).toBe(claudeAdapter);
+    expect(getAdapter("claude-app")).toBe(claudeAdapter);
   });
 
-  it("returns codexAdapter for codex", () => {
+  it("returns codexAdapter for codex-cli and codex-app sources", () => {
+    expect(getAdapter("codex-cli")).toBe(codexAdapter);
+    expect(getAdapter("codex-app")).toBe(codexAdapter);
+  });
+
+  it("accepts a format string directly", () => {
+    expect(getAdapter("claude")).toBe(claudeAdapter);
     expect(getAdapter("codex")).toBe(codexAdapter);
   });
 });

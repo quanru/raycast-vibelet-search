@@ -3,14 +3,26 @@ import * as path from "path";
 import * as os from "os";
 import { execFileSync } from "child_process";
 import { rgPath } from "@vscode/ripgrep";
-import { claudeAdapter, codexAdapter, cleanTitle, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
+import {
+  claudeAdapter,
+  codexAdapter,
+  cleanTitle,
+  getAdapter,
+  getFormatForSource,
+  isMeaningfulUserMessage,
+} from "./format-adapters";
 import type {
+  ClaudeAppSessionFile,
   ClaudeSessionIndexFile,
   CodexConversationLine,
   CodexIndexLine,
+  SessionFormat,
   SessionMessage,
   SessionMeta,
 } from "./types";
+
+/** Marker that the Codex desktop app writes in `payload.originator` of session_meta. */
+const CODEX_APP_ORIGINATOR = "Codex Desktop";
 
 /** Internal logging — surfaces in `ray develop` console without breaking the user. */
 function warn(...args: unknown[]): void {
@@ -62,10 +74,10 @@ function readJsonlHead(filePath: string, maxBytes: number = 65536): unknown[] {
 /**
  * Extract a session title from a JSONL file by finding the first meaningful user message.
  */
-function extractTitleFromFile(filePath: string, source: "claude-code" | "codex"): { title: string; timestamp: string } {
-  const adapter = getAdapter(source);
+function extractTitleFromFile(filePath: string, format: SessionFormat): { title: string; timestamp: string } {
+  const adapter = getAdapter(format);
   // Codex sessions can have a very long AGENTS.md as the first user message; read more bytes
-  const maxBytes = source === "codex" ? 131072 : 65536;
+  const maxBytes = format === "codex" ? 131072 : 65536;
   const lines = readJsonlHead(filePath, maxBytes);
 
   for (const raw of lines) {
@@ -79,10 +91,10 @@ function extractTitleFromFile(filePath: string, source: "claude-code" | "codex")
 }
 
 /**
- * Load only metadata (title, path, timestamp) for all Claude Code sessions.
+ * Load only metadata (title, path, timestamp) for all Claude Code CLI sessions.
  * Does NOT read full message content — used for the initial list render.
  */
-export function loadClaudeCodeSessionMetas(): SessionMeta[] {
+export function loadClaudeCliSessionMetas(): SessionMeta[] {
   const homeDir = os.homedir();
   const sessionsDir = path.join(homeDir, ".claude", "sessions");
   const projectsDir = path.join(homeDir, ".claude", "projects");
@@ -139,7 +151,7 @@ export function loadClaudeCodeSessionMetas(): SessionMeta[] {
         }
 
         const indexEntry = sessionIndex.get(sessionId);
-        const { title, timestamp: firstMsgTs } = extractTitleFromFile(filePath, "claude-code");
+        const { title, timestamp: firstMsgTs } = extractTitleFromFile(filePath, "claude");
         const decodedPath = decodeURIComponent(projDir);
 
         const firstMsgEpoch = firstMsgTs ? new Date(firstMsgTs).getTime() : NaN;
@@ -148,7 +160,7 @@ export function loadClaudeCodeSessionMetas(): SessionMeta[] {
         results.push({
           id: sessionId,
           title,
-          source: "claude-code",
+          source: "claude-cli",
           projectPath: indexEntry?.cwd || decodedPath,
           timestamp,
           filePath,
@@ -160,6 +172,130 @@ export function loadClaudeCodeSessionMetas(): SessionMeta[] {
   }
 
   return results;
+}
+
+/**
+ * Encode a project cwd into Claude's projects/<encoded> directory name.
+ *
+ * Verified by inspecting existing `~/.claude/projects/` directories:
+ * each unsafe character (anything outside [A-Za-z0-9-]) is replaced with a
+ * single `-`, **without collapsing runs** — so `/.claude` → `--claude`
+ * (two dashes, one from `/`, one from `.`).
+ */
+function encodeClaudeProjectDir(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+/**
+ * Load metadata for Claude Desktop app sessions.
+ * Walks `~/Library/Application Support/Claude/claude-code-sessions/<user>/<workspace>/local_*.json`
+ * and resolves each entry's conversation jsonl in `~/.claude/projects/<encoded-cwd>/<cliSessionId>.jsonl`.
+ *
+ * Sessions whose conversation jsonl can't be located are still surfaced (so they appear in the list),
+ * but their content/search will be empty.
+ */
+export function loadClaudeAppSessionMetas(): SessionMeta[] {
+  const homeDir = os.homedir();
+  const appSessionsDir = path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions");
+  const projectsDir = path.join(homeDir, ".claude", "projects");
+
+  if (!fs.existsSync(appSessionsDir)) return [];
+
+  const metaFiles: string[] = [];
+  try {
+    // Two levels deep: <user>/<workspace>/local_*.json
+    for (const userDir of fs.readdirSync(appSessionsDir)) {
+      const userPath = path.join(appSessionsDir, userDir);
+      let userStat;
+      try {
+        userStat = fs.statSync(userPath);
+      } catch {
+        continue;
+      }
+      if (!userStat.isDirectory()) continue;
+
+      for (const workspaceDir of fs.readdirSync(userPath)) {
+        const workspacePath = path.join(userPath, workspaceDir);
+        let workspaceStat;
+        try {
+          workspaceStat = fs.statSync(workspacePath);
+        } catch {
+          continue;
+        }
+        if (!workspaceStat.isDirectory()) continue;
+
+        let entries: string[] = [];
+        try {
+          entries = fs.readdirSync(workspacePath);
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (entry.startsWith("local_") && entry.endsWith(".json")) {
+            metaFiles.push(path.join(workspacePath, entry));
+          }
+        }
+      }
+    }
+  } catch (e) {
+    warn("failed to scan Claude app sessions dir:", e);
+    return [];
+  }
+
+  const results: SessionMeta[] = [];
+  for (const metaPath of metaFiles) {
+    let appMeta: ClaudeAppSessionFile;
+    try {
+      appMeta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as ClaudeAppSessionFile;
+    } catch (e) {
+      warn(`failed to parse Claude app session ${metaPath}:`, e);
+      continue;
+    }
+
+    const cliSessionId = appMeta.cliSessionId;
+    const cwd = appMeta.cwd || appMeta.originCwd || "";
+
+    // Resolve the conversation jsonl. Without cliSessionId+cwd we can't locate it.
+    let convoPath = "";
+    if (cliSessionId && cwd) {
+      const candidate = path.join(projectsDir, encodeClaudeProjectDir(cwd), `${cliSessionId}.jsonl`);
+      if (fs.existsSync(candidate)) convoPath = candidate;
+    }
+
+    // Some sessions write a title via the app ("Session 222" placeholder when titleSource=auto).
+    // Prefer real titles; for auto/placeholder, fall back to first message extraction.
+    let title = appMeta.title?.trim() || "";
+    const looksPlaceholder = !title || /^Session\s+\d+$/i.test(title);
+    if (looksPlaceholder && convoPath) {
+      const fromContent = extractTitleFromFile(convoPath, "claude").title;
+      if (fromContent && fromContent !== "Untitled Session") title = fromContent;
+    }
+    if (!title) title = "Untitled Session";
+
+    const timestamp =
+      appMeta.lastActivityAt || appMeta.createdAt || (convoPath ? safeMtimeMs(convoPath) : 0) || safeMtimeMs(metaPath);
+
+    results.push({
+      id: cliSessionId || appMeta.sessionId,
+      title,
+      source: "claude-app",
+      projectPath: cwd,
+      timestamp,
+      filePath: convoPath || metaPath,
+      prUrl: appMeta.prUrl,
+      prNumber: appMeta.prNumber,
+    });
+  }
+
+  return results;
+}
+
+function safeMtimeMs(p: string): number {
+  try {
+    return fs.statSync(p).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -201,17 +337,19 @@ export function parseCodexSessionMetaLine(parsed: CodexConversationLine): {
   id: string;
   projectPath: string;
   ts: number;
+  originator?: string;
 } | null {
-  // New format: { type: "session_meta", payload: { id, cwd, ... } }
+  // New format: { type: "session_meta", payload: { id, cwd, originator, ... } }
   if (parsed.type === "session_meta" && parsed.payload?.id) {
     return {
       id: parsed.payload.id,
       projectPath: parsed.payload.cwd || "",
       ts: parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0,
+      originator: parsed.payload.originator,
     };
   }
 
-  // Old format: { id, timestamp, instructions, git? } — no `type` field
+  // Old format: { id, timestamp, instructions, git? } — no `type` field, no originator
   if (parsed.id && parsed.timestamp && !parsed.type) {
     return {
       id: parsed.id,
@@ -223,7 +361,9 @@ export function parseCodexSessionMetaLine(parsed: CodexConversationLine): {
   return null;
 }
 
-function readCodexSessionMeta(filePath: string): { id: string; projectPath: string; ts: number } | null {
+function readCodexSessionMeta(
+  filePath: string,
+): { id: string; projectPath: string; ts: number; originator?: string } | null {
   const lines = readJsonlHead(filePath, CODEX_META_READ_BYTES);
   if (lines.length === 0) return null;
   return parseCodexSessionMetaLine(lines[0] as CodexConversationLine);
@@ -269,11 +409,12 @@ export function loadCodexSessionMetas(): SessionMeta[] {
 
     const indexInfo = titleMap.get(sessionMeta.id);
     const title = indexInfo?.name || extractTitleFromFile(filePath, "codex").title;
+    const source = sessionMeta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli";
 
     results.push({
       id: sessionMeta.id,
       title,
-      source: "codex",
+      source,
       projectPath: sessionMeta.projectPath,
       timestamp: indexInfo ? new Date(indexInfo.updatedAt).getTime() : sessionMeta.ts,
       filePath,
@@ -284,12 +425,33 @@ export function loadCodexSessionMetas(): SessionMeta[] {
 }
 
 /**
- * Load all session metas from both sources, sorted by recency.
+ * Load all session metas from every source, sorted by recency.
+ *
+ * Deduplication: a Claude Desktop app session reuses the underlying CLI conversation jsonl
+ * (`cliSessionId` → `~/.claude/projects/<encoded>/<id>.jsonl`). When both sources surface
+ * the same id, the app entry wins because it carries richer metadata (true title, PR link,
+ * activity timestamp). Codex CLI vs App is also keyed by id but currently lives in disjoint
+ * sets — we still dedupe to be safe.
  */
 export function loadAllSessionMetas(): SessionMeta[] {
-  const claude = loadClaudeCodeSessionMetas();
+  const claudeCli = loadClaudeCliSessionMetas();
+  const claudeApp = loadClaudeAppSessionMetas();
   const codex = loadCodexSessionMetas();
-  return [...claude, ...codex].sort((a, b) => b.timestamp - a.timestamp);
+
+  const merged = new Map<string, SessionMeta>();
+
+  // Insert in order of *increasing* precedence so the last writer wins.
+  for (const m of claudeCli) merged.set(`claude:${m.id}`, m);
+  for (const m of claudeApp) merged.set(`claude:${m.id}`, m);
+
+  for (const m of codex) {
+    const key = `codex:${m.id}`;
+    const existing = merged.get(key);
+    // If both sources somehow saw the same id, prefer codex-app over codex-cli.
+    if (!existing || m.source === "codex-app") merged.set(key, m);
+  }
+
+  return [...merged.values()].sort((a, b) => b.timestamp - a.timestamp);
 }
 
 // --- Content loading (on demand) ---
@@ -307,7 +469,7 @@ export function loadSessionMessages(meta: SessionMeta): SessionMessage[] {
     return [];
   }
 
-  const adapter = getAdapter(meta.source);
+  const adapter = getAdapter(getFormatForSource(meta.source));
   const messages: SessionMessage[] = [];
 
   for (const line of content.split("\n")) {

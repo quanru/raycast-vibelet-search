@@ -2,7 +2,20 @@
  * Source-agnostic shapes used by the UI layer.
  */
 
-export type SessionSource = "claude-code" | "codex";
+/**
+ * Source of a session.
+ * - `claude-cli`  — Claude Code CLI (terminal)
+ * - `claude-app`  — Claude Desktop app (`~/Library/Application Support/Claude/claude-code-sessions/`)
+ * - `codex-cli`   — Codex CLI / codex_exec / @vibelet/cli / etc. (terminal originators)
+ * - `codex-app`   — Codex Desktop app (originator = "Codex Desktop")
+ *
+ * Conversation files for both Claude variants live in `~/.claude/projects/`,
+ * and both Codex variants live in `~/.codex/sessions/`. The split happens at meta load time.
+ */
+export type SessionSource = "claude-cli" | "claude-app" | "codex-cli" | "codex-app";
+
+/** Underlying conversation file format — used to pick a JSONL adapter. */
+export type SessionFormat = "claude" | "codex";
 
 export interface SessionMessage {
   role: "user" | "assistant";
@@ -17,6 +30,9 @@ export interface SessionMeta {
   projectPath: string;
   timestamp: number; // epoch ms
   filePath: string; // path to the JSONL file for lazy loading
+  /** Claude app extras: PR link surfaced in detail view if present. */
+  prUrl?: string;
+  prNumber?: number;
 }
 
 /**
@@ -32,6 +48,25 @@ export interface ClaudeSessionIndexFile {
   startedAt: number;
   kind?: string;
   entrypoint?: string;
+}
+
+// Claude Desktop app session metadata file:
+// ~/Library/Application Support/Claude/claude-code-sessions/<user>/<workspace>/local_<sessionId>.json
+export interface ClaudeAppSessionFile {
+  sessionId: string;
+  cliSessionId?: string;
+  cwd?: string;
+  originCwd?: string;
+  createdAt?: number;
+  lastActivityAt?: number;
+  title?: string;
+  titleSource?: string;
+  isArchived?: boolean;
+  prNumber?: number;
+  prUrl?: string;
+  prRepository?: string;
+  prState?: string;
+  model?: string;
 }
 
 // Claude Code conversation JSONL line
@@ -63,6 +98,8 @@ export interface CodexConversationLine {
     content?: Array<{ type?: string; text?: string }>;
     id?: string;
     cwd?: string;
+    originator?: string;
+    source?: string;
   };
   timestamp?: string;
   // old format (session-meta line)

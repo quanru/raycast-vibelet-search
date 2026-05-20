@@ -13,7 +13,7 @@ import {
 import { useCachedPromise } from "@raycast/utils";
 import { useMemo, useRef, useState } from "react";
 import { loadAllSessionMetas, loadSessionMessages, searchSessionContent } from "./parsers";
-import { getResumeCommand, openResumeInTerminal } from "./terminal";
+import { getResumeCommand, openInApp, openResumeInTerminal, sourceFamily } from "./terminal";
 import {
   findMatchIndex,
   formatRelativeTime,
@@ -21,7 +21,23 @@ import {
   formatSessionPlainText,
   renderMessage,
 } from "./format-session";
-import type { SessionMeta } from "./types";
+import type { SessionMeta, SessionSource } from "./types";
+
+const SOURCE_LABEL: Record<SessionSource, string> = {
+  "claude-cli": "Claude Code",
+  "claude-app": "Claude App",
+  "codex-cli": "Codex CLI",
+  "codex-app": "Codex App",
+};
+
+const SOURCE_BADGE: Record<SessionSource, string> = {
+  "claude-cli": "🟠",
+  "claude-app": "🟣",
+  "codex-cli": "🟢",
+  "codex-app": "🔵",
+};
+
+const SOURCE_ORDER: SessionSource[] = ["claude-cli", "claude-app", "codex-cli", "codex-app"];
 
 const DETAIL_TRUNCATE_BYTES = 3000;
 
@@ -37,11 +53,12 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
   );
 
   const markdown = useMemo(() => {
-    const sourceLabel = meta.source === "claude-code" ? "Claude Code" : "Codex";
-    const sourceBadge = meta.source === "claude-code" ? "🟠" : "🟢";
+    const sourceLabel = SOURCE_LABEL[meta.source];
+    const sourceBadge = SOURCE_BADGE[meta.source];
+    const prSuffix = meta.prUrl ? ` · [PR #${meta.prNumber ?? ""}](${meta.prUrl})` : "";
     const headerOnly =
       `# ${sourceBadge} ${meta.title}\n\n` +
-      `${sourceLabel} · \`${meta.projectPath}\` · ${new Date(meta.timestamp).toLocaleString()} · ${messages?.length ?? "…"} messages\n\n` +
+      `${sourceLabel} · \`${meta.projectPath}\` · ${new Date(meta.timestamp).toLocaleString()} · ${messages?.length ?? "…"} messages${prSuffix}\n\n` +
       `---\n\n`;
 
     if (!messages || messages.length === 0) return headerOnly + "*Loading conversation…*";
@@ -87,24 +104,47 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
     [meta, messages],
   );
 
+  const isAppSource = meta.source === "claude-app" || meta.source === "codex-app";
+  const appName = sourceFamily(meta.source) === "claude" ? "Claude" : "Codex";
+
+  const openInAppAction = (
+    <Action
+      title={`Open in ${appName}`}
+      icon={Icon.AppWindow}
+      onAction={async () => {
+        try {
+          await openInApp(meta);
+          await closeMainWindow();
+        } catch (e) {
+          showToast({ style: Toast.Style.Failure, title: `Failed to open ${appName}`, message: String(e) });
+        }
+      }}
+    />
+  );
+
+  const openInTerminalAction = (
+    <Action
+      title="Open Resume in Terminal"
+      icon={Icon.Terminal}
+      onAction={async () => {
+        try {
+          await openResumeInTerminal(meta);
+          await closeMainWindow();
+        } catch (e) {
+          showToast({ style: Toast.Style.Failure, title: "Failed to open terminal", message: String(e) });
+        }
+      }}
+    />
+  );
+
   return (
     <Detail
       isLoading={isLoading}
       markdown={markdown}
       actions={
         <ActionPanel>
-          <Action
-            title="Open Resume in Terminal"
-            icon={Icon.Terminal}
-            onAction={async () => {
-              try {
-                await openResumeInTerminal(meta);
-                await closeMainWindow();
-              } catch (e) {
-                showToast({ style: Toast.Style.Failure, title: "Failed to open terminal", message: String(e) });
-              }
-            }}
-          />
+          {isAppSource ? openInAppAction : openInTerminalAction}
+          {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
             title="Copy Resume Command"
             content={getResumeCommand(meta)}
@@ -207,8 +247,15 @@ export default function SearchSessions() {
     return results;
   }, [allMetas, searchText, contentMatches, metaByFilePath]);
 
-  const claudeSessions = filteredSessions.filter((s) => s.source === "claude-code");
-  const codexSessions = filteredSessions.filter((s) => s.source === "codex");
+  const sectionsBySource = useMemo(() => {
+    const grouped = new Map<SessionSource, (SessionMeta & { matchSnippet?: string })[]>();
+    for (const session of filteredSessions) {
+      const list = grouped.get(session.source) ?? [];
+      list.push(session);
+      grouped.set(session.source, list);
+    }
+    return grouped;
+  }, [filteredSessions]);
 
   return (
     <List
@@ -218,38 +265,84 @@ export default function SearchSessions() {
       searchBarPlaceholder="Search sessions by title or content..."
       throttle
     >
-      {claudeSessions.length > 0 && (
-        <List.Section title="Claude Code" subtitle={`${claudeSessions.length} sessions`}>
-          {claudeSessions.map((session) => (
-            <SessionItem key={session.id} meta={session} matchSnippet={session.matchSnippet} query={searchText} />
-          ))}
-        </List.Section>
-      )}
-      {codexSessions.length > 0 && (
-        <List.Section title="Codex" subtitle={`${codexSessions.length} sessions`}>
-          {codexSessions.map((session) => (
-            <SessionItem key={session.id} meta={session} matchSnippet={session.matchSnippet} query={searchText} />
-          ))}
-        </List.Section>
-      )}
+      {SOURCE_ORDER.map((source) => {
+        const items = sectionsBySource.get(source);
+        if (!items || items.length === 0) return null;
+        return (
+          <List.Section key={source} title={SOURCE_LABEL[source]} subtitle={`${items.length} sessions`}>
+            {items.map((session) => (
+              <SessionItem
+                key={`${session.source}:${session.id}`}
+                meta={session}
+                matchSnippet={session.matchSnippet}
+                query={searchText}
+              />
+            ))}
+          </List.Section>
+        );
+      })}
     </List>
   );
 }
 
 function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSnippet?: string; query: string }) {
-  const icon =
-    meta.source === "claude-code"
-      ? { source: Icon.Terminal, tintColor: Color.Orange }
-      : { source: Icon.Code, tintColor: Color.Green };
+  const icon = (() => {
+    switch (meta.source) {
+      case "claude-cli":
+        return { source: Icon.Terminal, tintColor: Color.Orange };
+      case "claude-app":
+        return { source: Icon.AppWindow, tintColor: Color.Purple };
+      case "codex-cli":
+        return { source: Icon.Code, tintColor: Color.Green };
+      case "codex-app":
+        return { source: Icon.AppWindow, tintColor: Color.Blue };
+    }
+  })();
 
   const detailQuery = matchSnippet ? query : undefined;
+  const isAppSource = meta.source === "claude-app" || meta.source === "codex-app";
+  const appName = sourceFamily(meta.source) === "claude" ? "Claude" : "Codex";
+
+  const openInAppAction = (
+    <Action
+      title={`Open in ${appName}`}
+      icon={Icon.AppWindow}
+      shortcut={{ modifiers: ["cmd"], key: "o" }}
+      onAction={async () => {
+        try {
+          await openInApp(meta);
+          await closeMainWindow();
+          await popToRoot();
+        } catch (e) {
+          showToast({ style: Toast.Style.Failure, title: `Failed to open ${appName}`, message: String(e) });
+        }
+      }}
+    />
+  );
+
+  const openInTerminalAction = (
+    <Action
+      title="Open Resume in Terminal"
+      icon={Icon.Terminal}
+      shortcut={{ modifiers: ["cmd"], key: "t" }}
+      onAction={async () => {
+        try {
+          await openResumeInTerminal(meta);
+          await closeMainWindow();
+          await popToRoot();
+        } catch (e) {
+          showToast({ style: Toast.Style.Failure, title: "Failed to open terminal", message: String(e) });
+        }
+      }}
+    />
+  );
 
   return (
     <List.Item
       icon={icon}
       title={meta.title}
       subtitle={matchSnippet || meta.projectPath}
-      accessories={[{ text: formatRelativeTime(meta.timestamp) }]}
+      accessories={[{ tag: SOURCE_LABEL[meta.source] }, { text: formatRelativeTime(meta.timestamp) }]}
       actions={
         <ActionPanel>
           <Action.Push
@@ -257,20 +350,8 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
             icon={Icon.Eye}
             target={<SessionDetail meta={meta} query={detailQuery} />}
           />
-          <Action
-            title="Open Resume in Terminal"
-            icon={Icon.Terminal}
-            shortcut={{ modifiers: ["cmd"], key: "t" }}
-            onAction={async () => {
-              try {
-                await openResumeInTerminal(meta);
-                await closeMainWindow();
-                await popToRoot();
-              } catch (e) {
-                showToast({ style: Toast.Style.Failure, title: "Failed to open terminal", message: String(e) });
-              }
-            }}
-          />
+          {isAppSource ? openInAppAction : openInTerminalAction}
+          {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
             title="Copy Resume Command"
             content={getResumeCommand(meta)}

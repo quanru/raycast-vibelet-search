@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Add Claude Desktop app source — surfaces sessions from `~/Library/Application Support/Claude/claude-code-sessions/`, with PR metadata, deduped against the CLI source.
+- Add Codex Desktop app source — distinguished from Codex CLI via the `session_meta.originator` field (`"Codex Desktop"`).
+- List is now grouped into four sections: Claude Code, Claude App, Codex CLI, Codex App, each with its own colored badge.
+- New per-session "Open in App" action (Claude.app / Codex.app, `⌘O`). App-sourced sessions default to opening the app; CLI-sourced default to resuming in the terminal.
+- Session detail view now shows linked PR # for Claude App sessions when present.
+
 ## [Initial Version] - 2026-05-20
 
 - Unified search across Claude Code (`~/.claude`) and Codex CLI (`~/.codex`) sessions

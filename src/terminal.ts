@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { getPreferenceValues } from "@raycast/api";
-import type { SessionMeta } from "./types";
+import type { SessionMeta, SessionSource } from "./types";
 
 interface Prefs {
   defaultTerminal: string;
@@ -23,12 +23,29 @@ function getUserShell(): string {
 
 /**
  * Build the resume command string for a session — what the user would type into a shell.
+ * App-sourced sessions still resume via CLI: the conversation jsonl is shared with the CLI,
+ * and the CLIs accept the same session id.
  */
 export function getResumeCommand(meta: SessionMeta, prefs: Prefs = getPrefs()): string {
-  if (meta.source === "claude-code") {
+  if (sourceFamily(meta.source) === "claude") {
     return `${prefs.claudeBinary} --resume ${meta.id}`;
   }
   return `${prefs.codexBinary} resume ${meta.id}`;
+}
+
+export function sourceFamily(source: SessionSource): "claude" | "codex" {
+  return source === "claude-cli" || source === "claude-app" ? "claude" : "codex";
+}
+
+/**
+ * Open the conversation in the corresponding native app (Claude.app or Codex.app).
+ * We just bring the app to the front — neither app currently exposes a documented URL
+ * scheme to jump to a specific session id. The user lands in the app and selects the
+ * session from its recent list.
+ */
+export async function openInApp(meta: SessionMeta): Promise<void> {
+  const appName = sourceFamily(meta.source) === "claude" ? "Claude" : "Codex";
+  await runProcess("/usr/bin/open", ["-a", appName]);
 }
 
 /**

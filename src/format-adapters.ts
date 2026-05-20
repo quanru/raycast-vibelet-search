@@ -1,4 +1,10 @@
-import type { ClaudeConversationLine, CodexConversationLine, SessionMessage, SessionSource } from "./types";
+import type {
+  ClaudeConversationLine,
+  CodexConversationLine,
+  SessionFormat,
+  SessionMessage,
+  SessionSource,
+} from "./types";
 
 /**
  * Parsed message extracted from a single JSONL line.
@@ -11,7 +17,7 @@ export type ParsedLine = SessionMessage | null;
  * All consumers (title extraction, full conversation load, content search snippets) go through here.
  */
 export interface FormatAdapter {
-  source: SessionSource;
+  format: SessionFormat;
   parseLine(raw: unknown): ParsedLine;
 }
 
@@ -31,7 +37,7 @@ function extractTextBlocks(content: unknown): string {
 }
 
 export const claudeAdapter: FormatAdapter = {
-  source: "claude-code",
+  format: "claude",
   parseLine(raw) {
     if (raw === null || typeof raw !== "object") return null;
     const line = raw as ClaudeConversationLine;
@@ -50,7 +56,7 @@ export const claudeAdapter: FormatAdapter = {
 };
 
 export const codexAdapter: FormatAdapter = {
-  source: "codex",
+  format: "codex",
   parseLine(raw) {
     if (raw === null || typeof raw !== "object") return null;
     const line = raw as CodexConversationLine;
@@ -81,8 +87,15 @@ export const codexAdapter: FormatAdapter = {
   },
 };
 
-export function getAdapter(source: SessionSource): FormatAdapter {
-  return source === "claude-code" ? claudeAdapter : codexAdapter;
+export function getFormatForSource(source: SessionSource): SessionFormat {
+  return source === "claude-cli" || source === "claude-app" ? "claude" : "codex";
+}
+
+export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): FormatAdapter {
+  if (sourceOrFormat === "claude" || sourceOrFormat === "codex") {
+    return sourceOrFormat === "claude" ? claudeAdapter : codexAdapter;
+  }
+  return getFormatForSource(sourceOrFormat) === "claude" ? claudeAdapter : codexAdapter;
 }
 
 /**

@@ -91,7 +91,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "test",
       title: "t",
-      source: "claude-code",
+      source: "claude-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
@@ -122,7 +122,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "test",
       title: "t",
-      source: "claude-code",
+      source: "claude-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
@@ -163,7 +163,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "abc",
       title: "t",
-      source: "codex",
+      source: "codex-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
@@ -189,7 +189,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "old-1",
       title: "t",
-      source: "codex",
+      source: "codex-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
@@ -214,7 +214,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "test",
       title: "t",
-      source: "claude-code",
+      source: "claude-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
@@ -230,7 +230,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "test",
       title: "t",
-      source: "claude-code",
+      source: "claude-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath: path.join(tmpDir, "does-not-exist.jsonl"),
@@ -259,7 +259,7 @@ describe("loadSessionMessages", () => {
     const meta: SessionMeta = {
       id: "long-1",
       title: "t",
-      source: "codex",
+      source: "codex-cli",
       projectPath: "/tmp",
       timestamp: 0,
       filePath,
