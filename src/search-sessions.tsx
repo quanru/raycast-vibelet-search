@@ -342,7 +342,7 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
       icon={icon}
       title={meta.title}
       subtitle={matchSnippet || meta.projectPath}
-      accessories={[{ tag: SOURCE_LABEL[meta.source] }, { text: formatRelativeTime(meta.timestamp) }]}
+      accessories={[{ text: formatRelativeTime(meta.timestamp) }]}
       actions={
         <ActionPanel>
           <Action.Push

@@ -1,6 +1,10 @@
 # Vibelet Search
 
+> Part of the **[Vibelet](https://vibelet.icu)** toolkit — AI coding from your phone. Visit **<https://vibelet.icu>** to remotely drive Claude / Codex coding agents from mobile (send prompts, review diffs, approve tool calls, all local-first).
+
 Search your Claude and Codex sessions globally from Raycast — across **CLI and Desktop apps** — by title or full conversation content. Resume any session in your terminal, or jump straight into the corresponding desktop app, with one keystroke.
+
+🌐 **Website**: <https://vibelet.icu>  ·  Repo: <https://github.com/quanru/raycast-vibelet-search>
 
 ## Features
 
@@ -50,3 +54,8 @@ When the same session appears in both CLI and App sources (e.g. a Claude session
 To keep startup fast even with thousands of sessions, only the first ~64 KB of each file is read at index time to extract the title. Full message content is lazily loaded when you open a session detail view, and full-text search is delegated to ripgrep.
 
 Nothing leaves your machine. The extension makes zero network requests.
+
+## Related
+
+- **[Vibelet](https://vibelet.icu)** — control Claude / Codex coding agents from your phone. Companion to this extension: search your sessions from Raycast on desktop, drive them from mobile.
+
