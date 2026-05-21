@@ -3,7 +3,7 @@
 # Vibelet Search — Raycast extension installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/quanru/vibelet-search/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/quanru/raycast-vibelet-search/main/install.sh | bash
 #
 # Or, after cloning manually:
 #   ./install.sh
@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO_URL="${VIBELET_REPO:-https://github.com/quanru/vibelet-search.git}"
+REPO_URL="${VIBELET_REPO:-https://github.com/quanru/raycast-vibelet-search.git}"
 INSTALL_DIR="${VIBELET_DIR:-$HOME/.local/share/vibelet-search}"
 BRANCH="${VIBELET_BRANCH:-main}"
 

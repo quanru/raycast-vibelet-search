@@ -82,12 +82,14 @@
     "vitest": "^4.1.4"
   },
   "scripts": {
-    "build": "ray build --skip-types -e dist -o dist",
-    "dev": "ray develop",
+    "prepare-assets": "node scripts/copy-ripgrep.cjs",
+    "postinstall": "node scripts/copy-ripgrep.cjs",
+    "build": "npm run prepare-assets && ray build --skip-types -e dist -o dist",
+    "dev": "npm run prepare-assets && ray develop",
     "lint": "ray lint",
     "fix-lint": "ray lint --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "publish": "npx @raycast/api@latest publish"
+    "publish": "npm run prepare-assets && npx @raycast/api@latest publish"
   }
 }
