@@ -8,22 +8,38 @@
  * We can't rely on `rgPath` at runtime: Raycast's bundler rewrites
  * `import.meta.url` / `__dirname` inside imported packages, which makes
  * `createRequire` inside `@vscode/ripgrep` crash and pick a non-existent path.
+ *
+ * `@vscode/ripgrep` >= 1.18 ships per-platform subpackages
+ * (`@vscode/ripgrep-<platform>-<arch>/bin/<binary>`). Earlier versions
+ * bundled the binary inside the main package (`@vscode/ripgrep/bin/<binary>`).
+ * We try the new layout first, then fall back.
  */
 
 const fs = require("fs");
 const path = require("path");
 
-// `@vscode/ripgrep` is a single package (not a monorepo with @scope/foo-<platform>-<arch>
-// subpackages). It downloads the binary into bin/ via its postinstall script.
 const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
 
+const candidates = [
+  `@vscode/ripgrep-${process.platform}-${process.arch}/bin/${binaryName}`,
+  `@vscode/ripgrep/bin/${binaryName}`,
+];
+
 let sourcePath;
-try {
-  sourcePath = require.resolve(`@vscode/ripgrep/bin/${binaryName}`);
-} catch (error) {
-  console.error(`Could not find @vscode/ripgrep/bin/${binaryName}.`);
+for (const candidate of candidates) {
+  try {
+    sourcePath = require.resolve(candidate);
+    break;
+  } catch {
+    // try next
+  }
+}
+
+if (!sourcePath) {
+  console.error(`Could not locate ripgrep binary for ${process.platform}-${process.arch}.`);
+  console.error(`Tried: ${candidates.join(", ")}`);
   console.error("Run `npm install` first — @vscode/ripgrep's postinstall hook downloads the binary.");
-  throw error;
+  process.exit(1);
 }
 
 const assetsDir = path.join(__dirname, "..", "assets");
