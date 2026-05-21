@@ -55,6 +55,20 @@ To keep startup fast even with thousands of sessions, only the first ~64 KB of e
 
 Nothing leaves your machine. The extension makes zero network requests.
 
+## Development
+
+```bash
+npm install            # postinstall copies the ripgrep binary into assets/
+npm test               # vitest
+npm run dev            # `ray develop` — hot-reloads into Raycast
+npm run build:sync     # one-shot: build + push dist/ into every Raycast
+                       # install (Stable / Beta / etc.) that already has
+                       # the extension imported. Useful when you don't
+                       # want to keep `ray develop` running.
+```
+
+`npm run sync` auto-detects any `~/.config/raycast*/extensions/vibelet-search/` it finds and copies `dist/` into each — no Raycast variant is hard-coded.
+
 ## Related
 
 - **[Vibelet](https://vibelet.icu)** — control Claude / Codex coding agents from your phone. Companion to this extension: search your sessions from Raycast on desktop, drive them from mobile.
