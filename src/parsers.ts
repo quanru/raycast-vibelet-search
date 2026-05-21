@@ -499,39 +499,51 @@ function buildSnippet(text: string, lowerQuery: string, queryLength: number): st
   return (s > 0 ? "..." : "") + text.slice(s, e).replace(/\s+/g, " ") + (e < text.length ? "..." : "");
 }
 
+/**
+ * `null` = tried and failed; `undefined` = not yet tried.
+ */
 let cachedRipgrepPath: string | undefined | null;
 
+/**
+ * Locate a usable `rg` binary.
+ *
+ * Strategy: `prepare-assets` copies the postinstalled binary into `assets/rg`,
+ * and `ray build` ships that next to the bundled JS — so the primary candidate
+ * is `__dirname/assets/rg`. We then fall back to local `node_modules` (dev mode)
+ * and a small fixed list of system locations.
+ *
+ * No subprocess probing per candidate: `fs.accessSync(X_OK)` keeps cold-start
+ * under ~5ms even on the worst-case fall-through. We don't scan `$PATH` —
+ * a typical `$PATH` has 20+ directories and the previous design did a child
+ * spawn per miss (1s timeout each), which froze the worker for tens of seconds
+ * when ripgrep was absent.
+ */
 function resolveRipgrepPath(): string | undefined {
   if (cachedRipgrepPath !== undefined) return cachedRipgrepPath ?? undefined;
 
   const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
-  const arch = process.env.npm_config_arch || process.arch;
-  const platformPkg = `@vscode/ripgrep-${process.platform}-${arch}`;
   const extensionDir = typeof __dirname === "string" ? __dirname : process.cwd();
 
   const candidates = [
+    // Bundled with the extension (preferred — written here by scripts/copy-ripgrep.cjs
+    // and packaged into the .ray bundle by `ray build`).
     path.join(extensionDir, "assets", binaryName),
     path.join(process.cwd(), "assets", binaryName),
-    path.join(process.cwd(), "node_modules", platformPkg, "bin", binaryName),
-    "/Applications/Codex.app/Contents/Resources/rg",
+    // Source location during local dev.
+    path.join(process.cwd(), "node_modules", "@vscode", "ripgrep", "bin", binaryName),
+    // System fallbacks: Apple-Silicon brew → Intel brew → /usr/local → /usr/bin.
     "/opt/homebrew/bin/rg",
     "/usr/local/bin/rg",
     "/usr/bin/rg",
-    ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, binaryName)),
   ];
 
-  const seen = new Set<string>();
   for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) continue;
-    seen.add(candidate);
-
     try {
-      if (!fs.statSync(candidate).isFile()) continue;
-      execFileSync(candidate, ["--version"], { stdio: "ignore", timeout: 1000 });
+      fs.accessSync(candidate, fs.constants.X_OK);
       cachedRipgrepPath = candidate;
       return candidate;
     } catch {
-      // Try the next candidate.
+      // try next
     }
   }
 

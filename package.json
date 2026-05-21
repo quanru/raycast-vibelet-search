@@ -83,6 +83,7 @@
   },
   "scripts": {
     "prepare-assets": "node scripts/copy-ripgrep.cjs",
+    "postinstall": "node scripts/copy-ripgrep.cjs",
     "build": "npm run prepare-assets && ray build --skip-types -e dist -o dist",
     "dev": "npm run prepare-assets && ray develop",
     "lint": "ray lint",

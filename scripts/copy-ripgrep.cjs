@@ -1,23 +1,30 @@
 #!/usr/bin/env node
+/**
+ * Copy the ripgrep binary that `@vscode/ripgrep`'s postinstall fetched into
+ * the extension's `assets/` directory, so that after `ray build` the binary
+ * sits next to the bundled JS (alongside `__dirname`) and can be located at
+ * runtime without `require("@vscode/ripgrep").rgPath`.
+ *
+ * We can't rely on `rgPath` at runtime: Raycast's bundler rewrites
+ * `import.meta.url` / `__dirname` inside imported packages, which makes
+ * `createRequire` inside `@vscode/ripgrep` crash and pick a non-existent path.
+ */
 
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
 
-const arch = process.env.npm_config_arch || process.arch;
+// `@vscode/ripgrep` is a single package (not a monorepo with @scope/foo-<platform>-<arch>
+// subpackages). It downloads the binary into bin/ via its postinstall script.
 const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
-const platformPkg = `@vscode/ripgrep-${process.platform}-${arch}`;
 
 let sourcePath;
 try {
-  sourcePath = require.resolve(`${platformPkg}/bin/${binaryName}`);
+  sourcePath = require.resolve(`@vscode/ripgrep/bin/${binaryName}`);
 } catch (error) {
-  console.error(`Could not find ${platformPkg}/bin/${binaryName}.`);
-  console.error("Run `npm install` without disabling optional dependencies, then try again.");
+  console.error(`Could not find @vscode/ripgrep/bin/${binaryName}.`);
+  console.error("Run `npm install` first — @vscode/ripgrep's postinstall hook downloads the binary.");
   throw error;
 }
-
-execFileSync(sourcePath, ["--version"], { stdio: "ignore", timeout: 1000 });
 
 const assetsDir = path.join(__dirname, "..", "assets");
 const destinationPath = path.join(assetsDir, binaryName);
