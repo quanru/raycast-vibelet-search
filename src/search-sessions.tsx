@@ -151,7 +151,7 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Cmd (Dangerous)"
+            title="Copy Resume Cmd (dangerous)"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />
@@ -363,7 +363,7 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Cmd (Dangerous)"
+            title="Copy Resume Cmd (dangerous)"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />

@@ -41,11 +41,7 @@ export interface ResumeCommandOpts {
  * App-sourced sessions still resume via CLI: the conversation jsonl is shared with the CLI,
  * and the CLIs accept the same session id.
  */
-export function getResumeCommand(
-  meta: SessionMeta,
-  prefs: Prefs = getPrefs(),
-  opts: ResumeCommandOpts = {},
-): string {
+export function getResumeCommand(meta: SessionMeta, prefs: Prefs = getPrefs(), opts: ResumeCommandOpts = {}): string {
   const { withCwd = true, skipPermissions = false } = opts;
 
   let cmd: string;
