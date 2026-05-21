@@ -98,7 +98,12 @@ function extractTitleFromFile(
 
     if (!title) {
       const parsed = adapter.parseLine(raw);
-      if (parsed && parsed.role === "user" && isMeaningfulUserMessage(parsed.content)) {
+      if (
+        parsed &&
+        parsed.role === "user" &&
+        parsed.content.trim().length >= 3 &&
+        isMeaningfulUserMessage(parsed.content)
+      ) {
         title = cleanTitle(parsed.content);
         timestamp = parsed.timestamp;
       }
@@ -503,7 +508,12 @@ export function loadSessionMessages(meta: SessionMeta): SessionMessage[] {
       continue;
     }
     const msg = adapter.parseLine(parsed);
-    if (msg) messages.push(msg);
+    if (!msg) continue;
+    // Suppress auto-injected user-role events (system reminders, hook output, slash-command
+    // wrappers, interrupted-by-user markers, ...) so the conversation view shows only what
+    // the user actually typed and the assistant actually said.
+    if (msg.role === "user" && !isMeaningfulUserMessage(msg.content)) continue;
+    messages.push(msg);
   }
 
   return messages;

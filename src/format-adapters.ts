@@ -100,22 +100,42 @@ export function getAdapter(sourceOrFormat: SessionSource | SessionFormat): Forma
 
 /**
  * Heuristic: is this user message a real user input vs system/env context?
- * Used by title extraction to skip AGENTS.md, environment context, etc.
+ *
+ * Used by:
+ * - Title extraction (skip AGENTS.md / env context to find the real first prompt)
+ * - Conversation rendering (hide auto-injected events from the chat view)
+ *
+ * Returning false means "not user-authored; suppress from display".
  */
 export function isMeaningfulUserMessage(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.length < 3) return false;
+  // No length-based filtering here: short messages like "ok" / "要" are real replies that
+  // should still appear in the conversation view. Callers that want a length floor (e.g.
+  // title extraction) apply it themselves.
+  if (!trimmed) return false;
 
-  // Skip AGENTS.md / CLAUDE.md / system instructions
+  // AGENTS.md / CLAUDE.md / system instructions auto-prepended at session start
   if (/^#\s*(AGENTS|CLAUDE)\.md/i.test(trimmed)) return false;
 
-  // Skip wrapped system context tags
-  if (/^<(system-reminder|environment_context|command-message|command-name|command-args)[\s>]/.test(trimmed)) {
+  // Auto-injected XML-style wrapper tags. Claude Code surfaces hook output, slash-command
+  // bodies, background task notifications and similar as user-role messages wrapped in
+  // one of these tags — none of them are user-typed.
+  if (
+    /^<(system-reminder|environment_context|command-message|command-name|command-args|task-notification|local-command-stdout|local-command-stderr|user-prompt-submit-hook|bash-input|bash-stdout|bash-stderr)[\s>]/.test(
+      trimmed,
+    )
+  ) {
     return false;
   }
 
-  // Skip caveat prefixes
+  // "Caveat: ..." prefix is auto-prepended when a session is resumed with extra context
   if (trimmed.startsWith("Caveat:")) return false;
+
+  // Auto-injected when the user presses ESC during a tool call
+  if (/^\[Request interrupted by user(?: for tool use)?\]$/.test(trimmed)) return false;
+
+  // Lone image-only message (no accompanying user text)
+  if (/^\[Image:[^\]]*\]$/.test(trimmed)) return false;
 
   return true;
 }

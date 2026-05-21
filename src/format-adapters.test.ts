@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { claudeAdapter, codexAdapter, cleanTitle, getAdapter, isMeaningfulUserMessage } from "./format-adapters";
 
 describe("isMeaningfulUserMessage", () => {
-  it("rejects empty / very short input", () => {
+  it("rejects only empty / whitespace-only input (short replies are still real)", () => {
     expect(isMeaningfulUserMessage("")).toBe(false);
     expect(isMeaningfulUserMessage("  ")).toBe(false);
-    expect(isMeaningfulUserMessage("hi")).toBe(false);
+    // Short replies are real user content — should be kept
+    expect(isMeaningfulUserMessage("ok")).toBe(true);
+    expect(isMeaningfulUserMessage("要")).toBe(true);
   });
 
   it("rejects AGENTS.md / CLAUDE.md system prompts", () => {
@@ -25,6 +27,24 @@ describe("isMeaningfulUserMessage", () => {
 
   it("rejects Caveat: prefixes", () => {
     expect(isMeaningfulUserMessage("Caveat: this conversation was resumed")).toBe(false);
+  });
+
+  it("rejects auto-injected event wrappers", () => {
+    expect(isMeaningfulUserMessage("<task-notification>done</task-notification>")).toBe(false);
+    expect(isMeaningfulUserMessage("<local-command-stdout>ok</local-command-stdout>")).toBe(false);
+    expect(isMeaningfulUserMessage("<local-command-stderr>nope</local-command-stderr>")).toBe(false);
+    expect(isMeaningfulUserMessage("<user-prompt-submit-hook>x</user-prompt-submit-hook>")).toBe(false);
+    expect(isMeaningfulUserMessage("<bash-input>ls</bash-input>")).toBe(false);
+    expect(isMeaningfulUserMessage("<bash-stdout>file.txt</bash-stdout>")).toBe(false);
+  });
+
+  it("rejects interrupted-by-user markers", () => {
+    expect(isMeaningfulUserMessage("[Request interrupted by user for tool use]")).toBe(false);
+    expect(isMeaningfulUserMessage("[Request interrupted by user]")).toBe(false);
+  });
+
+  it("rejects lone image-only messages", () => {
+    expect(isMeaningfulUserMessage("[Image: source: /tmp/foo.png]")).toBe(false);
   });
 
   it("accepts real user messages", () => {
