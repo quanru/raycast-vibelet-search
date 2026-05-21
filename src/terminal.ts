@@ -21,16 +21,46 @@ function getUserShell(): string {
   return process.env.SHELL || "/bin/zsh";
 }
 
+export interface ResumeCommandOpts {
+  /**
+   * Prepend `cd <projectPath> && ` so the command works when pasted into a shell from
+   * any cwd. Defaults to true — Claude CLI's `--resume <id>` only finds the session when
+   * run from the original project directory.
+   */
+  withCwd?: boolean;
+  /**
+   * Add the per-CLI "skip all permission prompts" flag.
+   * - Claude: `--dangerously-skip-permissions`
+   * - Codex:  `--dangerously-bypass-approvals-and-sandbox`
+   */
+  skipPermissions?: boolean;
+}
+
 /**
  * Build the resume command string for a session — what the user would type into a shell.
  * App-sourced sessions still resume via CLI: the conversation jsonl is shared with the CLI,
  * and the CLIs accept the same session id.
  */
-export function getResumeCommand(meta: SessionMeta, prefs: Prefs = getPrefs()): string {
+export function getResumeCommand(
+  meta: SessionMeta,
+  prefs: Prefs = getPrefs(),
+  opts: ResumeCommandOpts = {},
+): string {
+  const { withCwd = true, skipPermissions = false } = opts;
+
+  let cmd: string;
   if (sourceFamily(meta.source) === "claude") {
-    return `${prefs.claudeBinary} --resume ${meta.id}`;
+    cmd = `${prefs.claudeBinary} --resume ${meta.id}`;
+    if (skipPermissions) cmd += " --dangerously-skip-permissions";
+  } else {
+    cmd = `${prefs.codexBinary} resume ${meta.id}`;
+    if (skipPermissions) cmd += " --dangerously-bypass-approvals-and-sandbox";
   }
-  return `${prefs.codexBinary} resume ${meta.id}`;
+
+  if (withCwd && meta.projectPath) {
+    cmd = `cd ${shellQuote(meta.projectPath)} && ${cmd}`;
+  }
+  return cmd;
 }
 
 export function sourceFamily(source: SessionSource): "claude" | "codex" {
@@ -53,8 +83,7 @@ export async function openInApp(meta: SessionMeta): Promise<void> {
  * Used by terminal apps that send a single string into an interactive shell.
  */
 function buildFullResumeShellCommand(meta: SessionMeta, prefs: Prefs): string {
-  const cmd = getResumeCommand(meta, prefs);
-  return meta.projectPath ? `cd ${shellQuote(meta.projectPath)} && ${cmd}` : cmd;
+  return getResumeCommand(meta, prefs, { withCwd: true });
 }
 
 function shellQuote(s: string): string {
@@ -121,7 +150,8 @@ end tell`,
       // Ghostty wraps --initial-command as `bash --noprofile --norc -c "exec -l <cmd>"`,
       // which loses the user's PATH because no rc files are sourced. Re-exec into an interactive
       // shell so ~/.zshrc (where nvm/claude/codex live) is loaded before running the resume command.
-      const initialCmd = `${getUserShell()} -ic ${shellQuote(getResumeCommand(meta, prefs))}`;
+      // No need to cd — Ghostty's --working-directory already moves us there.
+      const initialCmd = `${getUserShell()} -ic ${shellQuote(getResumeCommand(meta, prefs, { withCwd: false }))}`;
       await runProcess("/usr/bin/open", [
         "-na",
         "Ghostty.app",
@@ -133,6 +163,7 @@ end tell`,
     }
 
     case "WezTerm":
+      // WezTerm's --cwd already handles the cd.
       await runProcess("/usr/bin/open", [
         "-na",
         "WezTerm.app",
@@ -143,7 +174,7 @@ end tell`,
         "--",
         getUserShell(),
         "-ic",
-        getResumeCommand(meta, prefs),
+        getResumeCommand(meta, prefs, { withCwd: false }),
       ]);
       break;
 
