@@ -30,8 +30,9 @@ Search your Claude and Codex sessions globally from Raycast — across **CLI and
 
 - `↵` View conversation (or matched context if searching content)
 - `⌘O` Open in corresponding desktop app (Claude.app / Codex.app)
-- `⌘T` Open resume command in configured terminal
+- `⌘T` Resume in configured terminal
 - `⌘R` Copy resume command to clipboard
+- `⌘⇧R` Copy resume command with the per-CLI dangerous-skip-permissions flag
 - Open project directory in Finder
 - Copy session ID / project path
 

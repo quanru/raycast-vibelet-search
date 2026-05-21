@@ -124,7 +124,7 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
 
   const openInTerminalAction = (
     <Action
-      title="Open Resume in Terminal"
+      title="Resume in Terminal"
       icon={Icon.Terminal}
       onAction={async () => {
         try {
@@ -146,12 +146,12 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
           {isAppSource ? openInAppAction : openInTerminalAction}
           {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
-            title="Copy Resume Command"
+            title="Copy Resume Cmd"
             content={getResumeCommand(meta)}
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Command (Skip Permissions)"
+            title="Copy Resume Cmd (Dangerous)"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />
@@ -327,7 +327,7 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
 
   const openInTerminalAction = (
     <Action
-      title="Open Resume in Terminal"
+      title="Resume in Terminal"
       icon={Icon.Terminal}
       shortcut={{ modifiers: ["cmd"], key: "t" }}
       onAction={async () => {
@@ -358,12 +358,12 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
           {isAppSource ? openInAppAction : openInTerminalAction}
           {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
-            title="Copy Resume Command"
+            title="Copy Resume Cmd"
             content={getResumeCommand(meta)}
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Command (Skip Permissions)"
+            title="Copy Resume Cmd (Dangerous)"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />
