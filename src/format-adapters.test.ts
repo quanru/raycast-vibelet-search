@@ -229,6 +229,29 @@ describe("codexAdapter.parseLine", () => {
     expect(codexAdapter.parseLine({ type: "turn_context" })).toBeNull();
   });
 
+  it("returns null for developer/system role messages (Codex protocol noise)", () => {
+    expect(
+      codexAdapter.parseLine({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: "<permissions instructions> ..." }],
+        },
+      }),
+    ).toBeNull();
+    expect(
+      codexAdapter.parseLine({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "system",
+          content: [{ type: "input_text", text: "system stuff" }],
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("returns null when content is missing", () => {
     expect(
       codexAdapter.parseLine({

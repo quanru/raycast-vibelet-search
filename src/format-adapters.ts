@@ -63,6 +63,10 @@ export const codexAdapter: FormatAdapter = {
 
     // New format: { type: "response_item", payload: { type: "message", role, content } }
     if (line.type === "response_item" && line.payload?.type === "message" && line.payload.role) {
+      // Codex Desktop emits role="developer" messages carrying internal protocol bits
+      // ("<permissions instructions>", "Approved command prefix saved: ...") — never
+      // part of the user-visible conversation. Drop anything outside user/assistant.
+      if (line.payload.role !== "user" && line.payload.role !== "assistant") return null;
       const text = extractTextBlocks(line.payload.content);
       if (!text) return null;
       return {
@@ -74,6 +78,7 @@ export const codexAdapter: FormatAdapter = {
 
     // Old format: { type: "message", role, content }
     if (line.type === "message" && line.role && line.content) {
+      if (line.role !== "user" && line.role !== "assistant") return null;
       const text = extractTextBlocks(line.content);
       if (!text) return null;
       return {
