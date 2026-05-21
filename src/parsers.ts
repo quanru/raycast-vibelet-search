@@ -72,21 +72,42 @@ function readJsonlHead(filePath: string, maxBytes: number = 65536): unknown[] {
 
 /**
  * Extract a session title from a JSONL file by finding the first meaningful user message.
+ *
+ * For Claude files, also returns the `cwd` field carried on each line — the project
+ * directory name under `~/.claude/projects/` is a lossy `-` substitution and can't be
+ * reversed back to the real path, so the only reliable source is the JSONL content.
  */
-function extractTitleFromFile(filePath: string, format: SessionFormat): { title: string; timestamp: string } {
+function extractTitleFromFile(
+  filePath: string,
+  format: SessionFormat,
+): { title: string; timestamp: string; cwd: string } {
   const adapter = getAdapter(format);
   // Codex sessions can have a very long AGENTS.md as the first user message; read more bytes
   const maxBytes = format === "codex" ? 131072 : 65536;
   const lines = readJsonlHead(filePath, maxBytes);
 
+  let title = "";
+  let timestamp = "";
+  let cwd = "";
+
   for (const raw of lines) {
-    const parsed = adapter.parseLine(raw);
-    if (!parsed || parsed.role !== "user") continue;
-    if (!isMeaningfulUserMessage(parsed.content)) continue;
-    return { title: cleanTitle(parsed.content), timestamp: parsed.timestamp };
+    if (!cwd && format === "claude" && raw && typeof raw === "object") {
+      const maybeCwd = (raw as { cwd?: unknown }).cwd;
+      if (typeof maybeCwd === "string" && maybeCwd) cwd = maybeCwd;
+    }
+
+    if (!title) {
+      const parsed = adapter.parseLine(raw);
+      if (parsed && parsed.role === "user" && isMeaningfulUserMessage(parsed.content)) {
+        title = cleanTitle(parsed.content);
+        timestamp = parsed.timestamp;
+      }
+    }
+
+    if (title && (format !== "claude" || cwd)) break;
   }
 
-  return { title: "Untitled Session", timestamp: "" };
+  return { title: title || "Untitled Session", timestamp, cwd };
 }
 
 /**
@@ -150,17 +171,19 @@ export function loadClaudeCliSessionMetas(): SessionMeta[] {
         }
 
         const indexEntry = sessionIndex.get(sessionId);
-        const { title, timestamp: firstMsgTs } = extractTitleFromFile(filePath, "claude");
-        const decodedPath = decodeURIComponent(projDir);
+        const { title, timestamp: firstMsgTs, cwd: cwdFromFile } = extractTitleFromFile(filePath, "claude");
 
         const firstMsgEpoch = firstMsgTs ? new Date(firstMsgTs).getTime() : NaN;
         const timestamp = indexEntry?.startedAt ?? (Number.isFinite(firstMsgEpoch) ? firstMsgEpoch : mtime);
 
+        // Priority: session index cwd > cwd embedded in JSONL > "" (skip cd in resume cmd).
+        // We don't fall back to the encoded dir name — it's lossy (each non-alnum char → `-`),
+        // so decoding "-Users-bytedance-personal-midscene-10" produces a path that doesn't exist.
         results.push({
           id: sessionId,
           title,
           source: "claude-cli",
-          projectPath: indexEntry?.cwd || decodedPath,
+          projectPath: indexEntry?.cwd || cwdFromFile || "",
           timestamp,
           filePath,
         });
