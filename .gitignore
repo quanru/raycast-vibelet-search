@@ -6,6 +6,7 @@
 raycast-env.d.ts
 .DS_Store
 .npmrc
+.claude/
 .env
 .env.local
 *.log

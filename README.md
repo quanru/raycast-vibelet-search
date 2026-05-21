@@ -36,6 +36,62 @@ Search your Claude and Codex sessions globally from Raycast — across **CLI and
 - Open project directory in Finder
 - Copy session ID / project path
 
+## Installation
+
+This extension is **not yet on the Raycast Store**, so install it from source.
+This section is written so an AI assistant (Claude Code, Codex, etc.) can run
+it end-to-end without further input.
+
+### Prerequisites
+
+- macOS (Raycast is macOS-only)
+- [Raycast](https://raycast.com) installed at `/Applications/Raycast.app`
+- Node.js ≥ 20 (`node -v`) — `brew install node` if missing
+- `git`
+
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/quanru/raycast-vibelet-search/main/install.sh | bash
+```
+
+The script clones the repo to `~/.local/share/vibelet-search`, runs `npm install`,
+builds, and opens Raycast's "Import Extension" dialog pointed at the clone.
+
+### Manual install
+
+```bash
+git clone https://github.com/quanru/raycast-vibelet-search.git ~/.local/share/vibelet-search
+cd ~/.local/share/vibelet-search
+npm install        # postinstall copies the bundled ripgrep binary
+npm run build
+open "raycast://extensions/raycast/raycast/import-extension?path=$HOME/.local/share/vibelet-search"
+```
+
+Then accept the import prompt inside Raycast.
+
+### Updating
+
+Because the extension is sideloaded (not from the Store), updates are **manual** —
+re-run the installer:
+
+```bash
+bash ~/.local/share/vibelet-search/install.sh
+```
+
+The script does `git fetch && git reset --hard origin/main`, rebuilds, and Raycast
+picks up the new bundle. (When the extension lands on the Raycast Store, Store
+users will get automatic updates; sideloaded users will still need to re-run the
+installer or `git pull && npm run build`.)
+
+### Uninstall
+
+```bash
+rm -rf ~/.local/share/vibelet-search
+```
+
+Then remove "Vibelet Search" from Raycast → Extensions.
+
 ## Preferences
 
 - **Default Terminal** — choose your preferred terminal app (Terminal.app, iTerm, Ghostty, WezTerm, Warp)
