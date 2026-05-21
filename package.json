@@ -4,7 +4,7 @@
   "title": "Vibelet Search",
   "description": "Search and resume Claude Code and Codex sessions (CLI + Desktop apps) by title or content.",
   "icon": "command-icon.png",
-  "author": "quanru",
+  "author": "leyang",
   "categories": [
     "Productivity"
   ],
