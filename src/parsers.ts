@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execFileSync } from "child_process";
+import { rgPath } from "@vscode/ripgrep";
 import {
   claudeAdapter,
   codexAdapter,
@@ -500,56 +501,7 @@ function buildSnippet(text: string, lowerQuery: string, queryLength: number): st
 }
 
 /**
- * Locate a usable `rg` binary.
- *
- * We can't `import { rgPath } from "@vscode/ripgrep"` at runtime: Raycast's bundler rewrites
- * `import.meta.url` inside imported packages, breaking `createRequire` and making `rgPath`
- * resolve to a non-existent path inside the Raycast extension sandbox.
- *
- * Strategy: the `prepare-assets` build step copies the postinstalled binary into
- * `assets/rg`, which `ray build` ships next to the bundled JS. At runtime we look first
- * at the bundled copy, then at the source location in `node_modules`, then fall back to
- * a system `rg` (Homebrew, /usr/local, /usr/bin) — without spawning a child process per
- * candidate, to keep first-search latency under 100ms.
- *
- * `null` = tried and failed; `undefined` = not yet tried.
- */
-let cachedRipgrepPath: string | null | undefined;
-
-function resolveRipgrepPath(): string | undefined {
-  if (cachedRipgrepPath !== undefined) return cachedRipgrepPath ?? undefined;
-
-  const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
-  const candidates = [
-    // Bundled with the extension (preferred — copied here by scripts/copy-ripgrep.cjs).
-    path.join(__dirname, "assets", binaryName),
-    path.join(process.cwd(), "assets", binaryName),
-    // Source location during local dev.
-    path.join(process.cwd(), "node_modules", "@vscode", "ripgrep", "bin", binaryName),
-    // System fallbacks. Order: Apple Silicon Homebrew → Intel Homebrew → /usr/local → /usr/bin.
-    "/opt/homebrew/bin/rg",
-    "/usr/local/bin/rg",
-    "/usr/bin/rg",
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      // We trust an executable file at one of these well-known paths — much faster than
-      // spawning a child for `--version` on every miss (each spawn is ~10-50ms).
-      fs.accessSync(candidate, fs.constants.X_OK);
-      cachedRipgrepPath = candidate;
-      return candidate;
-    } catch {
-      // try next
-    }
-  }
-
-  cachedRipgrepPath = null;
-  return undefined;
-}
-
-/**
- * Search content across all session files using ripgrep.
+ * Search content across all session files using ripgrep (bundled via @vscode/ripgrep).
  * Returns a map of filePath -> snippet. Limited to `limit` matches.
  *
  * Ripgrep runs as a subprocess so we don't pull hundreds of MB of JSONL into the Raycast Worker
@@ -559,9 +511,8 @@ export function searchSessionContent(query: string, limit: number): Map<string, 
   const results = new Map<string, string>();
   if (!query.trim() || query.length < 2) return results;
 
-  const rgPath = resolveRipgrepPath();
-  if (!rgPath) {
-    warn("ripgrep binary not found in assets/, node_modules/, or system paths");
+  if (!fs.existsSync(rgPath)) {
+    warn(`ripgrep binary missing at ${rgPath}`);
     return results;
   }
 
