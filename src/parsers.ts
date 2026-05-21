@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execFileSync } from "child_process";
-import { rgPath } from "@vscode/ripgrep";
 import {
   claudeAdapter,
   codexAdapter,
@@ -500,8 +499,48 @@ function buildSnippet(text: string, lowerQuery: string, queryLength: number): st
   return (s > 0 ? "..." : "") + text.slice(s, e).replace(/\s+/g, " ") + (e < text.length ? "..." : "");
 }
 
+let cachedRipgrepPath: string | undefined | null;
+
+function resolveRipgrepPath(): string | undefined {
+  if (cachedRipgrepPath !== undefined) return cachedRipgrepPath ?? undefined;
+
+  const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
+  const arch = process.env.npm_config_arch || process.arch;
+  const platformPkg = `@vscode/ripgrep-${process.platform}-${arch}`;
+  const extensionDir = typeof __dirname === "string" ? __dirname : process.cwd();
+
+  const candidates = [
+    path.join(extensionDir, "assets", binaryName),
+    path.join(process.cwd(), "assets", binaryName),
+    path.join(process.cwd(), "node_modules", platformPkg, "bin", binaryName),
+    "/Applications/Codex.app/Contents/Resources/rg",
+    "/opt/homebrew/bin/rg",
+    "/usr/local/bin/rg",
+    "/usr/bin/rg",
+    ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, binaryName)),
+  ];
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      execFileSync(candidate, ["--version"], { stdio: "ignore", timeout: 1000 });
+      cachedRipgrepPath = candidate;
+      return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  cachedRipgrepPath = null;
+  return undefined;
+}
+
 /**
- * Search content across all session files using ripgrep (bundled via @vscode/ripgrep).
+ * Search content across all session files using ripgrep.
  * Returns a map of filePath -> snippet. Limited to `limit` matches.
  *
  * Ripgrep runs as a subprocess so we don't pull hundreds of MB of JSONL into the Raycast Worker
@@ -511,8 +550,9 @@ export function searchSessionContent(query: string, limit: number): Map<string, 
   const results = new Map<string, string>();
   if (!query.trim() || query.length < 2) return results;
 
-  if (!fs.existsSync(rgPath)) {
-    warn(`ripgrep binary missing at ${rgPath}`);
+  const rgPath = resolveRipgrepPath();
+  if (!rgPath) {
+    warn("ripgrep binary missing");
     return results;
   }
 

@@ -1,6 +1,8 @@
 /node_modules
 /dist
 /coverage
+/assets/rg
+/assets/rg.exe
 raycast-env.d.ts
 .DS_Store
 .npmrc
