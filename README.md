@@ -92,6 +92,80 @@ rm -rf ~/.local/share/vibelet-search
 
 Then remove "Vibelet Search" from Raycast → Extensions.
 
+### For AI Agent
+
+Runbook when the one-liner above appears to succeed but the **Vibelet Search**
+command is missing from Raycast (typical symptom: user reports `command not
+found`). This is what to do without further input from the user.
+
+**1. Detect every Raycast variant on the machine.** Both Stable and Beta can
+coexist; their bundle IDs and config dirs are distinct:
+
+| Variant | App path | Bundle ID | Config dir |
+|---|---|---|---|
+| Stable | `/Applications/Raycast.app` | `com.raycast.macos` | `~/.config/raycast` |
+| Beta | `/Applications/Raycast Beta.app` | `com.raycast-x.macos` | `~/.config/raycast-x` |
+
+```bash
+ls /Applications | grep -i raycast
+pgrep -lf Raycast | grep -v grep   # which one is actually running
+```
+
+**2. Make sure `raycast://` opens the variant the user actually uses.** The
+one-liner installer fires `open raycast://extensions/raycast/raycast/import-extension?path=...`,
+which goes to whichever app currently owns the `raycast://` URL scheme — often
+the wrong one when both are installed. Retarget it explicitly:
+
+```bash
+brew install duti                                   # if missing
+duti -s com.raycast-x.macos raycast viewer          # Beta
+# or
+duti -s com.raycast.macos   raycast viewer          # Stable
+duti -x raycast                                     # verify
+```
+
+**3. Confirm whether the import actually landed.** A successful import creates
+`~/.config/raycast*/extensions/vibelet-search/`:
+
+```bash
+find ~/.config -maxdepth 4 -name vibelet-search 2>/dev/null
+```
+
+If nothing is printed, the `import-extension` URL did **not** register the
+extension (the dialog may have been dismissed, or the wrong Raycast handled
+the URL). Do **not** retry the URL — fall through to step 4, which is the
+reliable path.
+
+**4. Force-register via `ray develop`.** This is the most robust sideload
+method: the dev server talks to the running Raycast and creates the extension
+dir directly. Run it in the background (the process must stay alive while
+`ray develop` is the source of truth):
+
+```bash
+cd ~/.local/share/vibelet-search
+npm run dev &                                       # leaves ray develop running
+# wait a few seconds, then verify
+find ~/.config -maxdepth 4 -name vibelet-search 2>/dev/null
+```
+
+Once the directory exists, the command appears in Raycast immediately.
+
+**5. (Optional) Persist without keeping `ray develop` running.** Once the
+extension dir exists, `npm run sync` copies `dist/` into every Raycast variant
+that has it imported, so the extension survives after the dev process exits:
+
+```bash
+npm run build && npm run sync
+# then it's safe to:
+kill %1   # stop the backgrounded `ray develop`
+```
+
+**6. Reporting back to the user.** Tell them: which Raycast variant the
+extension was registered into (Stable vs Beta), the absolute extension dir
+created under `~/.config/raycast*/extensions/`, and — if step 2 was needed —
+that the `raycast://` URL handler was switched. If you left `ray develop`
+running in the background, say so explicitly so they can stop it later.
+
 ## Preferences
 
 - **Default Terminal** — choose your preferred terminal app (Terminal.app, iTerm, Ghostty, WezTerm, Warp)
