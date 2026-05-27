@@ -203,8 +203,8 @@ export default function SearchSessions() {
   // Content search runs ripgrep asynchronously so the worker event loop stays free for IPC.
   // useCachedPromise dedupes by args (searchText) — typing "abc" doesn't fan out into stale runs.
   const { data: contentMatches } = useCachedPromise(
-    async (q: string, hasMetas: boolean) => {
-      if (!q.trim() || q.length < 2 || !hasMetas) return new Map<string, string>();
+    async (q: string, hasMetas: boolean): Promise<Array<[string, string]>> => {
+      if (!q.trim() || q.length < 2 || !hasMetas) return [];
       return searchSessionContent(q, CONTENT_SEARCH_LIMIT);
     },
     [searchText, !!allMetas],

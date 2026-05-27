@@ -595,21 +595,23 @@ function resolveRipgrepPath(): string | undefined {
  */
 const execFileAsync = promisify(execFile);
 
-export async function searchSessionContent(query: string, limit: number): Promise<Map<string, string>> {
+// Returns tuples (not a Map) because the result flows through useCachedPromise's
+// JSON-serializing cache; a Map rehydrates as {} and breaks iteration.
+export async function searchSessionContent(query: string, limit: number): Promise<Array<[string, string]>> {
   const results = new Map<string, string>();
-  if (!query.trim() || query.length < 2) return results;
+  if (!query.trim() || query.length < 2) return [];
 
   const rgPath = resolveRipgrepPath();
   if (!rgPath) {
     warn("ripgrep binary missing");
-    return results;
+    return [];
   }
 
   const homeDir = os.homedir();
   const searchDirs = [path.join(homeDir, ".claude", "projects"), path.join(homeDir, ".codex", "sessions")].filter((d) =>
     fs.existsSync(d),
   );
-  if (searchDirs.length === 0) return results;
+  if (searchDirs.length === 0) return [];
 
   let output: string;
   try {
@@ -641,10 +643,10 @@ export async function searchSessionContent(query: string, limit: number): Promis
     // ripgrep exits with code 1 when there are no matches — that's not an error.
     // Anything else (timeouts, OOM, ENOENT, code >= 2) IS an error and should be surfaced.
     const e = err as { code?: number; stderr?: string | Buffer; message?: string };
-    if (e.code === 1) return results;
+    if (e.code === 1) return [];
     const stderrText = typeof e.stderr === "string" ? e.stderr : e.stderr?.toString();
     warn(`ripgrep search failed (code=${e.code}):`, stderrText || e.message);
-    return results;
+    return [];
   }
 
   const lowerQuery = query.toLowerCase();
@@ -680,5 +682,5 @@ export async function searchSessionContent(query: string, limit: number): Promis
     results.set(filePath, snippet);
   }
 
-  return results;
+  return Array.from(results);
 }
