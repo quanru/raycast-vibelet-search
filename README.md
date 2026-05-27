@@ -1,8 +1,19 @@
+<div align="center">
+
+<img src="assets/command-icon.png" alt="Vibelet Search" width="120" height="120" />
+
 # Vibelet Search
 
-> Part of the **[Vibelet](https://vibelet.icu)** toolkit — AI coding from your phone. Visit **<https://vibelet.icu>** to remotely drive Claude / Codex coding agents from mobile (send prompts, review diffs, approve tool calls, all local-first).
+**English** · [简体中文](./README.zh-CN.md)
 
-Search your Claude and Codex sessions globally from Raycast — across **CLI and Desktop apps** — by title or full conversation content. Resume any session in your terminal, or jump straight into the corresponding desktop app, with one keystroke.
+Search and resume Claude Code & Codex sessions from Raycast — across CLI and Desktop apps — by title or full conversation content.
+
+<img src="assets/screenshot-1.webp" alt="Vibelet Search — session list" width="720" />
+<img src="assets/screenshot-2.webp" alt="Vibelet Search — conversation detail" width="720" />
+
+</div>
+
+> Part of the **[Vibelet](https://vibelet.icu)** toolkit — AI coding from your phone. Visit **<https://vibelet.icu>** to remotely drive Claude / Codex coding agents from mobile (send prompts, review diffs, approve tool calls, all local-first).
 
 🌐 **Website**: <https://vibelet.icu>  ·  Repo: <https://github.com/quanru/raycast-vibelet-search>
 
