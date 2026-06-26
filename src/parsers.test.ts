@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadSessionMessages, parseCodexSessionMetaLine } from "./parsers";
+import { buildRipgrepArgs, loadSessionMessages, parseCodexSessionMetaLine } from "./parsers";
 import type { CodexConversationLine, SessionMeta } from "./types";
 
 describe("parseCodexSessionMetaLine", () => {
@@ -61,6 +61,15 @@ describe("parseCodexSessionMetaLine", () => {
   });
 });
 
+describe("buildRipgrepArgs", () => {
+  it("terminates options before the user query", () => {
+    const args = buildRipgrepArgs("--help", ["/tmp/sessions"]);
+    const terminatorIndex = args.indexOf("--");
+    expect(terminatorIndex).toBeGreaterThan(-1);
+    expect(args.slice(terminatorIndex)).toEqual(["--", "--help", "/tmp/sessions"]);
+  });
+});
+
 describe("loadSessionMessages", () => {
   let tmpDir: string;
 
@@ -78,7 +87,7 @@ describe("loadSessionMessages", () => {
     return file;
   }
 
-  it("loads Claude Code messages with string content", () => {
+  it("loads Claude Code messages with string content", async () => {
     const filePath = writeFile("claude.jsonl", [
       JSON.stringify({ type: "user", timestamp: "2026-04-10T10:00:00Z", message: { role: "user", content: "Hello" } }),
       JSON.stringify({
@@ -97,13 +106,13 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: "user", content: "Hello" });
     expect(messages[1]).toMatchObject({ role: "assistant", content: "Hi back" });
   });
 
-  it("loads Claude Code messages with content blocks, skipping tool_use", () => {
+  it("loads Claude Code messages with content blocks, skipping tool_use", async () => {
     const filePath = writeFile("claude-blocks.jsonl", [
       JSON.stringify({
         type: "assistant",
@@ -128,12 +137,12 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe("Let me read the file\nDone reading");
   });
 
-  it("loads Codex new-format messages", () => {
+  it("loads Codex new-format messages", async () => {
     const filePath = writeFile("codex-new.jsonl", [
       JSON.stringify({
         type: "session_meta",
@@ -169,13 +178,13 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(2); // session_meta is skipped
     expect(messages[0]).toMatchObject({ role: "user", content: "Hi Codex" });
     expect(messages[1]).toMatchObject({ role: "assistant", content: "Hello!" });
   });
 
-  it("loads Codex old-format messages", () => {
+  it("loads Codex old-format messages", async () => {
     const filePath = writeFile("codex-old.jsonl", [
       JSON.stringify({ id: "old-1", timestamp: "2025-09-01T08:00:00Z", instructions: "..." }),
       JSON.stringify({ type: "message", role: "user", content: [{ type: "input_text", text: "Old hello" }] }),
@@ -195,12 +204,12 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: "user", content: "Old hello" });
   });
 
-  it("skips malformed JSONL lines and continues parsing the rest", () => {
+  it("skips malformed JSONL lines and continues parsing the rest", async () => {
     const filePath = writeFile("mixed.jsonl", [
       JSON.stringify({ type: "user", timestamp: "2026-04-10T10:00:00Z", message: { role: "user", content: "first" } }),
       "{ this is not valid JSON",
@@ -220,13 +229,13 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(2);
     expect(messages[0].content).toBe("first");
     expect(messages[1].content).toBe("third");
   });
 
-  it("returns empty array when file does not exist", () => {
+  it("returns empty array when file does not exist", async () => {
     const meta: SessionMeta = {
       id: "test",
       title: "t",
@@ -235,13 +244,13 @@ describe("loadSessionMessages", () => {
       timestamp: 0,
       filePath: path.join(tmpDir, "does-not-exist.jsonl"),
     };
-    expect(loadSessionMessages(meta)).toEqual([]);
+    await expect(loadSessionMessages(meta)).resolves.toEqual([]);
   });
 
-  it("handles a session_meta line with a very long instructions field (regression test)", () => {
+  it("handles a session_meta line with a very long instructions field (regression test)", async () => {
     // Reproduce the bug where Codex session_meta lines exceeded the 4 KB read buffer.
-    // The first line is intentionally large; if loadSessionMessages reads the whole file
-    // (which it does), it should still parse subsequent message lines correctly.
+    // The first line is intentionally large; loadSessionMessages streams line-by-line and
+    // should still parse subsequent message lines correctly.
     const longInstructions = "x".repeat(20000);
     const filePath = writeFile("codex-long.jsonl", [
       JSON.stringify({
@@ -265,8 +274,84 @@ describe("loadSessionMessages", () => {
       filePath,
     };
 
-    const messages = loadSessionMessages(meta);
+    const messages = await loadSessionMessages(meta);
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe("after long meta");
+  });
+
+  it("caps loaded messages to avoid unbounded detail rendering", async () => {
+    const filePath = writeFile("many.jsonl", [
+      JSON.stringify({ type: "user", timestamp: "2026-04-10T10:00:00Z", message: { role: "user", content: "one" } }),
+      JSON.stringify({ type: "user", timestamp: "2026-04-10T10:00:01Z", message: { role: "user", content: "two" } }),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-10T10:00:02Z",
+        message: { role: "assistant", content: "three" },
+      }),
+    ]);
+
+    const meta: SessionMeta = {
+      id: "test",
+      title: "t",
+      source: "claude-cli",
+      projectPath: "/tmp",
+      timestamp: 0,
+      filePath,
+    };
+
+    const messages = await loadSessionMessages(meta, { maxMessages: 2 });
+    expect(messages.map((m) => m.content)).toEqual(["one", "two"]);
+  });
+
+  it("truncates oversized message content before storing it", async () => {
+    const filePath = writeFile("long-message.jsonl", [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-10T10:00:00Z",
+        message: { role: "assistant", content: "abcdefghijklmnopqrstuvwxyz" },
+      }),
+    ]);
+
+    const meta: SessionMeta = {
+      id: "test",
+      title: "t",
+      source: "claude-cli",
+      projectPath: "/tmp",
+      timestamp: 0,
+      filePath,
+    };
+
+    const messages = await loadSessionMessages(meta, { maxMessageChars: 5 });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain("abcde");
+    expect(messages[0].content).toContain("Message truncated");
+  });
+
+  it("skips raw JSONL lines above the configured safety limit", async () => {
+    const filePath = writeFile("huge-line.jsonl", [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-10T10:00:00Z",
+        message: { role: "assistant", content: "x".repeat(300) },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-10T10:00:01Z",
+        message: { role: "assistant", content: "kept" },
+      }),
+    ]);
+
+    const meta: SessionMeta = {
+      id: "test",
+      title: "t",
+      source: "claude-cli",
+      projectPath: "/tmp",
+      timestamp: 0,
+      filePath,
+    };
+
+    const messages = await loadSessionMessages(meta, { maxLineBytes: 180 });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe("kept");
   });
 });

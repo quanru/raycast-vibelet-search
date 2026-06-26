@@ -1,18 +1,5 @@
-import type { SessionMessage, SessionMeta, SessionSource } from "./types";
-
-const SOURCE_LABEL: Record<SessionSource, string> = {
-  "claude-cli": "Claude Code",
-  "claude-app": "Claude App",
-  "codex-cli": "Codex CLI",
-  "codex-app": "Codex App",
-};
-
-const SOURCE_BADGE: Record<SessionSource, string> = {
-  "claude-cli": "🟠",
-  "claude-app": "🟣",
-  "codex-cli": "🟢",
-  "codex-app": "🔵",
-};
+import { SOURCE_BADGE, SOURCE_LABEL } from "./source-display";
+import type { SessionMessage, SessionMeta } from "./types";
 
 /**
  * Format a single message as a markdown chunk.
@@ -110,7 +97,20 @@ export function findMatchIndex(messages: SessionMessage[], query: string): numbe
 export function highlightMatch(text: string, query: string): string {
   if (!query) return text;
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(escaped, "gi"), (m) => `**${m}**`);
+  const re = new RegExp(escaped, "gi");
+  let inFence = false;
+
+  return text
+    .split("\n")
+    .map((line) => {
+      const isFence = /^\s*(`{3,}|~{3,})/.test(line);
+      if (isFence) {
+        inFence = !inFence;
+        return line;
+      }
+      return inFence ? line : line.replace(re, (m) => `**${m}**`);
+    })
+    .join("\n");
 }
 
 /**

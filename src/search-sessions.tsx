@@ -21,21 +21,8 @@ import {
   formatSessionPlainText,
   renderMessage,
 } from "./format-session";
+import { SOURCE_BADGE, SOURCE_LABEL } from "./source-display";
 import type { SessionMeta, SessionSource } from "./types";
-
-const SOURCE_LABEL: Record<SessionSource, string> = {
-  "claude-cli": "Claude Code",
-  "claude-app": "Claude App",
-  "codex-cli": "Codex CLI",
-  "codex-app": "Codex App",
-};
-
-const SOURCE_BADGE: Record<SessionSource, string> = {
-  "claude-cli": "🟠",
-  "claude-app": "🟣",
-  "codex-cli": "🟢",
-  "codex-app": "🔵",
-};
 
 const SOURCE_ORDER: SessionSource[] = ["claude-cli", "claude-app", "codex-cli", "codex-app"];
 
@@ -61,7 +48,8 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
       `${sourceLabel} · \`${meta.projectPath}\` · ${new Date(meta.timestamp).toLocaleString()} · ${messages?.length ?? "…"} messages${prSuffix}\n\n` +
       `---\n\n`;
 
-    if (!messages || messages.length === 0) return headerOnly + "*Loading conversation…*";
+    if (!messages) return headerOnly + (isLoading ? "*Loading conversation…*" : "*No conversation messages found.*");
+    if (messages.length === 0) return headerOnly + "*No conversation messages found.*";
 
     const matchIdx = query ? findMatchIndex(messages, query) : -1;
 
@@ -92,7 +80,7 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
     }
 
     return formatSessionMarkdown(meta, messages, { query, truncate: DETAIL_TRUNCATE_BYTES });
-  }, [meta, messages, query]);
+  }, [isLoading, meta, messages, query]);
 
   // Full untruncated markdown for "Copy Full Conversation"
   const fullMarkdown = useMemo(
@@ -146,12 +134,12 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
           {isAppSource ? openInAppAction : openInTerminalAction}
           {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
-            title="Copy Resume Cmd"
+            title="Copy Resume Command"
             content={getResumeCommand(meta)}
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Cmd (dangerous)"
+            title="Copy Dangerous Resume Command"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />
@@ -165,13 +153,15 @@ function SessionDetail({ meta, query }: { meta: SessionMeta; query?: string }) {
             content={fullPlainText}
             shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
           />
-          <Action.ShowInFinder path={meta.projectPath} title="Open Project in Finder" />
+          {meta.projectPath ? <Action.ShowInFinder path={meta.projectPath} title="Open Project in Finder" /> : null}
+          {/* eslint-disable @raycast/prefer-title-case */}
           <Action.CopyToClipboard
             content={meta.id}
-            title="Copy Session Id"
+            title="Copy Session ID"
             shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
           />
-          <Action.CopyToClipboard content={meta.projectPath} title="Copy Project Path" />
+          {/* eslint-enable @raycast/prefer-title-case */}
+          {meta.projectPath ? <Action.CopyToClipboard content={meta.projectPath} title="Copy Project Path" /> : null}
         </ActionPanel>
       }
     />
@@ -190,7 +180,7 @@ export default function SearchSessions() {
   const { data: allMetas, isLoading: isLoadingMetas } = useCachedPromise(
     async () => {
       try {
-        return loadAllSessionMetas();
+        return await loadAllSessionMetas();
       } catch (e) {
         showToast({ style: Toast.Style.Failure, title: "Failed to load sessions", message: String(e) });
         return [];
@@ -205,10 +195,14 @@ export default function SearchSessions() {
   const { data: contentMatches } = useCachedPromise(
     async (q: string, hasMetas: boolean): Promise<Array<[string, string]>> => {
       if (!q.trim() || q.length < 2 || !hasMetas) return [];
-      return searchSessionContent(q, CONTENT_SEARCH_LIMIT);
+      try {
+        return await searchSessionContent(q, CONTENT_SEARCH_LIMIT);
+      } catch (e) {
+        showToast({ style: Toast.Style.Failure, title: "Content search unavailable", message: String(e) });
+        return [];
+      }
     },
     [searchText, !!allMetas],
-    { keepPreviousData: true },
   );
 
   // O(1) filePath -> meta lookup, used for merging content-search results into the list
@@ -357,12 +351,12 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
           {isAppSource ? openInAppAction : openInTerminalAction}
           {isAppSource ? openInTerminalAction : openInAppAction}
           <Action.CopyToClipboard
-            title="Copy Resume Cmd"
+            title="Copy Resume Command"
             content={getResumeCommand(meta)}
             shortcut={{ modifiers: ["cmd"], key: "r" }}
           />
           <Action.CopyToClipboard
-            title="Copy Resume Cmd (dangerous)"
+            title="Copy Dangerous Resume Command"
             content={getResumeCommand(meta, undefined, { skipPermissions: true })}
             shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
           />
@@ -372,7 +366,7 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
             shortcut={{ modifiers: ["cmd", "shift"], key: "m" }}
             onAction={async () => {
               try {
-                const messages = loadSessionMessages(meta);
+                const messages = await loadSessionMessages(meta);
                 if (messages.length === 0) {
                   showToast({ style: Toast.Style.Failure, title: "Empty session" });
                   return;
@@ -392,7 +386,7 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
             shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
             onAction={async () => {
               try {
-                const messages = loadSessionMessages(meta);
+                const messages = await loadSessionMessages(meta);
                 if (messages.length === 0) {
                   showToast({ style: Toast.Style.Failure, title: "Empty session" });
                   return;
@@ -406,13 +400,15 @@ function SessionItem({ meta, matchSnippet, query }: { meta: SessionMeta; matchSn
               }
             }}
           />
-          <Action.ShowInFinder path={meta.projectPath} title="Open Project in Finder" />
+          {meta.projectPath ? <Action.ShowInFinder path={meta.projectPath} title="Open Project in Finder" /> : null}
+          {/* eslint-disable @raycast/prefer-title-case */}
           <Action.CopyToClipboard
-            title="Copy Session Id"
+            title="Copy Session ID"
             content={meta.id}
             shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
           />
-          <Action.CopyToClipboard title="Copy Project Path" content={meta.projectPath} />
+          {/* eslint-enable @raycast/prefer-title-case */}
+          {meta.projectPath ? <Action.CopyToClipboard title="Copy Project Path" content={meta.projectPath} /> : null}
         </ActionPanel>
       }
     />

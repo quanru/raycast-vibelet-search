@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { ensureRipgrep } from "./ripgrep";
 import {
   claudeAdapter,
   codexAdapter,
@@ -23,6 +24,10 @@ import type {
 
 /** Marker that the Codex desktop app writes in `payload.originator` of session_meta. */
 const CODEX_APP_ORIGINATOR = "Codex Desktop";
+const DEFAULT_MAX_LOADED_MESSAGES = 500;
+const DEFAULT_MAX_MESSAGE_CHARS = 12000;
+const DEFAULT_MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024;
+const TRUNCATED_MESSAGE_SUFFIX = "\n\n[Message truncated to keep Raycast responsive.]";
 
 /** Internal logging — surfaces in `ray develop` console without breaking the user. */
 function warn(...args: unknown[]): void {
@@ -33,14 +38,32 @@ function warn(...args: unknown[]): void {
  * Read up to `maxBytes` from the head of a JSONL file and return parsed objects.
  * Used by title extraction to avoid loading multi-MB conversation files just to grab the first message.
  */
-function readJsonlHead(filePath: string, maxBytes: number = 65536): unknown[] {
-  let fd: number | undefined;
+async function pathExists(filePath: string): Promise<boolean> {
   try {
-    fd = fs.openSync(filePath, "r");
-    const stat = fs.fstatSync(fd);
+    await fs.promises.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function safeMtimeMs(filePath: string): Promise<number> {
+  try {
+    return (await fs.promises.stat(filePath)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function readJsonlHead(filePath: string, maxBytes: number = 65536): Promise<unknown[]> {
+  let handle: Awaited<ReturnType<typeof fs.promises.open>> | undefined;
+  try {
+    handle = await fs.promises.open(filePath, "r");
+    const stat = await handle.stat();
     const readSize = Math.min(maxBytes, stat.size);
+    if (readSize === 0) return [];
     const buf = Buffer.alloc(readSize);
-    fs.readSync(fd, buf, 0, readSize, 0);
+    await handle.read(buf, 0, readSize, 0);
 
     const chunk = buf.toString("utf-8", 0, readSize);
     const lines = chunk.split("\n");
@@ -61,9 +84,9 @@ function readJsonlHead(filePath: string, maxBytes: number = 65536): unknown[] {
     warn(`readJsonlHead failed for ${filePath}:`, e);
     return [];
   } finally {
-    if (fd !== undefined) {
+    if (handle) {
       try {
-        fs.closeSync(fd);
+        await handle.close();
       } catch {
         // already closed
       }
@@ -78,14 +101,14 @@ function readJsonlHead(filePath: string, maxBytes: number = 65536): unknown[] {
  * directory name under `~/.claude/projects/` is a lossy `-` substitution and can't be
  * reversed back to the real path, so the only reliable source is the JSONL content.
  */
-function extractTitleFromFile(
+async function extractTitleFromFile(
   filePath: string,
   format: SessionFormat,
-): { title: string; timestamp: string; cwd: string } {
+): Promise<{ title: string; timestamp: string; cwd: string }> {
   const adapter = getAdapter(format);
   // Codex sessions can have a very long AGENTS.md as the first user message; read more bytes
   const maxBytes = format === "codex" ? 131072 : 65536;
-  const lines = readJsonlHead(filePath, maxBytes);
+  const lines = await readJsonlHead(filePath, maxBytes);
 
   let title = "";
   let timestamp = "";
@@ -120,19 +143,19 @@ function extractTitleFromFile(
  * Load only metadata (title, path, timestamp) for all Claude Code CLI sessions.
  * Does NOT read full message content — used for the initial list render.
  */
-export function loadClaudeCliSessionMetas(): SessionMeta[] {
+export async function loadClaudeCliSessionMetas(): Promise<SessionMeta[]> {
   const homeDir = os.homedir();
   const sessionsDir = path.join(homeDir, ".claude", "sessions");
   const projectsDir = path.join(homeDir, ".claude", "projects");
 
   // Build map of sessionId -> session index file (for cwd + start timestamp)
   const sessionIndex = new Map<string, ClaudeSessionIndexFile>();
-  if (fs.existsSync(sessionsDir)) {
+  if (await pathExists(sessionsDir)) {
     try {
-      for (const file of fs.readdirSync(sessionsDir)) {
+      for (const file of await fs.promises.readdir(sessionsDir)) {
         if (!file.endsWith(".json")) continue;
         try {
-          const content = fs.readFileSync(path.join(sessionsDir, file), "utf-8");
+          const content = await fs.promises.readFile(path.join(sessionsDir, file), "utf-8");
           const meta = JSON.parse(content) as ClaudeSessionIndexFile;
           if (meta.sessionId) sessionIndex.set(meta.sessionId, meta);
         } catch (e) {
@@ -144,22 +167,22 @@ export function loadClaudeCliSessionMetas(): SessionMeta[] {
     }
   }
 
-  if (!fs.existsSync(projectsDir)) return [];
+  if (!(await pathExists(projectsDir))) return [];
 
   const results: SessionMeta[] = [];
 
   try {
-    for (const projDir of fs.readdirSync(projectsDir)) {
+    for (const projDir of await fs.promises.readdir(projectsDir)) {
       const projPath = path.join(projectsDir, projDir);
       try {
-        if (!fs.statSync(projPath).isDirectory()) continue;
+        if (!(await fs.promises.stat(projPath)).isDirectory()) continue;
       } catch {
         continue;
       }
 
       let jsonlFiles: string[];
       try {
-        jsonlFiles = fs.readdirSync(projPath).filter((f) => f.endsWith(".jsonl"));
+        jsonlFiles = (await fs.promises.readdir(projPath)).filter((f) => f.endsWith(".jsonl"));
       } catch (e) {
         warn(`failed to read claude project dir ${projDir}:`, e);
         continue;
@@ -171,13 +194,13 @@ export function loadClaudeCliSessionMetas(): SessionMeta[] {
 
         let mtime = 0;
         try {
-          mtime = fs.statSync(filePath).mtimeMs;
+          mtime = (await fs.promises.stat(filePath)).mtimeMs;
         } catch {
           // Use 0 — file will sort to the bottom
         }
 
         const indexEntry = sessionIndex.get(sessionId);
-        const { title, timestamp: firstMsgTs, cwd: cwdFromFile } = extractTitleFromFile(filePath, "claude");
+        const { title, timestamp: firstMsgTs, cwd: cwdFromFile } = await extractTitleFromFile(filePath, "claude");
 
         const firstMsgEpoch = firstMsgTs ? new Date(firstMsgTs).getTime() : NaN;
         const timestamp = indexEntry?.startedAt ?? (Number.isFinite(firstMsgEpoch) ? firstMsgEpoch : mtime);
@@ -222,31 +245,31 @@ function encodeClaudeProjectDir(cwd: string): string {
  * Sessions whose conversation jsonl can't be located are still surfaced (so they appear in the list),
  * but their content/search will be empty.
  */
-export function loadClaudeAppSessionMetas(): SessionMeta[] {
+export async function loadClaudeAppSessionMetas(): Promise<SessionMeta[]> {
   const homeDir = os.homedir();
   const appSessionsDir = path.join(homeDir, "Library", "Application Support", "Claude", "claude-code-sessions");
   const projectsDir = path.join(homeDir, ".claude", "projects");
 
-  if (!fs.existsSync(appSessionsDir)) return [];
+  if (!(await pathExists(appSessionsDir))) return [];
 
   const metaFiles: string[] = [];
   try {
     // Two levels deep: <user>/<workspace>/local_*.json
-    for (const userDir of fs.readdirSync(appSessionsDir)) {
+    for (const userDir of await fs.promises.readdir(appSessionsDir)) {
       const userPath = path.join(appSessionsDir, userDir);
       let userStat;
       try {
-        userStat = fs.statSync(userPath);
+        userStat = await fs.promises.stat(userPath);
       } catch {
         continue;
       }
       if (!userStat.isDirectory()) continue;
 
-      for (const workspaceDir of fs.readdirSync(userPath)) {
+      for (const workspaceDir of await fs.promises.readdir(userPath)) {
         const workspacePath = path.join(userPath, workspaceDir);
         let workspaceStat;
         try {
-          workspaceStat = fs.statSync(workspacePath);
+          workspaceStat = await fs.promises.stat(workspacePath);
         } catch {
           continue;
         }
@@ -254,7 +277,7 @@ export function loadClaudeAppSessionMetas(): SessionMeta[] {
 
         let entries: string[] = [];
         try {
-          entries = fs.readdirSync(workspacePath);
+          entries = await fs.promises.readdir(workspacePath);
         } catch {
           continue;
         }
@@ -274,7 +297,7 @@ export function loadClaudeAppSessionMetas(): SessionMeta[] {
   for (const metaPath of metaFiles) {
     let appMeta: ClaudeAppSessionFile;
     try {
-      appMeta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as ClaudeAppSessionFile;
+      appMeta = JSON.parse(await fs.promises.readFile(metaPath, "utf-8")) as ClaudeAppSessionFile;
     } catch (e) {
       warn(`failed to parse Claude app session ${metaPath}:`, e);
       continue;
@@ -287,7 +310,7 @@ export function loadClaudeAppSessionMetas(): SessionMeta[] {
     let convoPath = "";
     if (cliSessionId && cwd) {
       const candidate = path.join(projectsDir, encodeClaudeProjectDir(cwd), `${cliSessionId}.jsonl`);
-      if (fs.existsSync(candidate)) convoPath = candidate;
+      if (await pathExists(candidate)) convoPath = candidate;
     }
 
     // Some sessions write a title via the app ("Session 222" placeholder when titleSource=auto).
@@ -295,13 +318,13 @@ export function loadClaudeAppSessionMetas(): SessionMeta[] {
     let title = appMeta.title?.trim() || "";
     const looksPlaceholder = !title || /^Session\s+\d+$/i.test(title);
     if (looksPlaceholder && convoPath) {
-      const fromContent = extractTitleFromFile(convoPath, "claude").title;
+      const fromContent = (await extractTitleFromFile(convoPath, "claude")).title;
       if (fromContent && fromContent !== "Untitled Session") title = fromContent;
     }
     if (!title) title = "Untitled Session";
 
-    const timestamp =
-      appMeta.lastActivityAt || appMeta.createdAt || (convoPath ? safeMtimeMs(convoPath) : 0) || safeMtimeMs(metaPath);
+    const convoMtime = convoPath ? await safeMtimeMs(convoPath) : 0;
+    const timestamp = appMeta.lastActivityAt || appMeta.createdAt || convoMtime || (await safeMtimeMs(metaPath));
 
     results.push({
       id: cliSessionId || appMeta.sessionId,
@@ -318,22 +341,14 @@ export function loadClaudeAppSessionMetas(): SessionMeta[] {
   return results;
 }
 
-function safeMtimeMs(p: string): number {
-  try {
-    return fs.statSync(p).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
 /**
  * Walk a directory tree and return all `.jsonl` file paths.
  */
-function walkJsonlFiles(dir: string): string[] {
+async function walkJsonlFiles(dir: string): Promise<string[]> {
   const files: string[] = [];
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch (e) {
     warn(`failed to read directory ${dir}:`, e);
     return files;
@@ -342,7 +357,7 @@ function walkJsonlFiles(dir: string): string[] {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...walkJsonlFiles(fullPath));
+      files.push(...(await walkJsonlFiles(fullPath)));
     } else if (entry.name.endsWith(".jsonl")) {
       files.push(fullPath);
     }
@@ -389,10 +404,10 @@ export function parseCodexSessionMetaLine(parsed: CodexConversationLine): {
   return null;
 }
 
-function readCodexSessionMeta(
+async function readCodexSessionMeta(
   filePath: string,
-): { id: string; projectPath: string; ts: number; originator?: string } | null {
-  const lines = readJsonlHead(filePath, CODEX_META_READ_BYTES);
+): Promise<{ id: string; projectPath: string; ts: number; originator?: string } | null> {
+  const lines = await readJsonlHead(filePath, CODEX_META_READ_BYTES);
   if (lines.length === 0) return null;
   return parseCodexSessionMetaLine(lines[0] as CodexConversationLine);
 }
@@ -400,19 +415,19 @@ function readCodexSessionMeta(
 /**
  * Load only metadata for all Codex sessions.
  */
-export function loadCodexSessionMetas(): SessionMeta[] {
+export async function loadCodexSessionMetas(): Promise<SessionMeta[]> {
   const homeDir = os.homedir();
   const codexDir = path.join(homeDir, ".codex");
   const indexPath = path.join(codexDir, "session_index.jsonl");
   const sessionsDir = path.join(codexDir, "sessions");
 
-  if (!fs.existsSync(codexDir)) return [];
+  if (!(await pathExists(codexDir))) return [];
 
   // Build title index from session_index.jsonl (only covers a subset of sessions)
   const titleMap = new Map<string, { name: string; updatedAt: string }>();
-  if (fs.existsSync(indexPath)) {
+  if (await pathExists(indexPath)) {
     try {
-      const content = fs.readFileSync(indexPath, "utf-8");
+      const content = await fs.promises.readFile(indexPath, "utf-8");
       for (const line of content.split("\n")) {
         if (!line.trim()) continue;
         try {
@@ -427,16 +442,16 @@ export function loadCodexSessionMetas(): SessionMeta[] {
     }
   }
 
-  if (!fs.existsSync(sessionsDir)) return [];
+  if (!(await pathExists(sessionsDir))) return [];
 
   const results: SessionMeta[] = [];
 
-  for (const filePath of walkJsonlFiles(sessionsDir)) {
-    const sessionMeta = readCodexSessionMeta(filePath);
+  for (const filePath of await walkJsonlFiles(sessionsDir)) {
+    const sessionMeta = await readCodexSessionMeta(filePath);
     if (!sessionMeta) continue;
 
     const indexInfo = titleMap.get(sessionMeta.id);
-    const title = indexInfo?.name || extractTitleFromFile(filePath, "codex").title;
+    const title = indexInfo?.name || (await extractTitleFromFile(filePath, "codex")).title;
     const source = sessionMeta.originator === CODEX_APP_ORIGINATOR ? "codex-app" : "codex-cli";
 
     results.push({
@@ -461,10 +476,12 @@ export function loadCodexSessionMetas(): SessionMeta[] {
  * activity timestamp). Codex CLI vs App is also keyed by id but currently lives in disjoint
  * sets — we still dedupe to be safe.
  */
-export function loadAllSessionMetas(): SessionMeta[] {
-  const claudeCli = loadClaudeCliSessionMetas();
-  const claudeApp = loadClaudeAppSessionMetas();
-  const codex = loadCodexSessionMetas();
+export async function loadAllSessionMetas(): Promise<SessionMeta[]> {
+  const [claudeCli, claudeApp, codex] = await Promise.all([
+    loadClaudeCliSessionMetas(),
+    loadClaudeAppSessionMetas(),
+    loadCodexSessionMetas(),
+  ]);
 
   const merged = new Map<string, SessionMeta>();
 
@@ -484,37 +501,105 @@ export function loadAllSessionMetas(): SessionMeta[] {
 
 // --- Content loading (on demand) ---
 
+export interface LoadSessionMessagesOptions {
+  /**
+   * Upper bound for rendered/copied messages. Large sessions can contain tens of
+   * thousands of turns; keeping a bounded preview avoids Raycast's 100 MB worker heap.
+   */
+  maxMessages?: number;
+  /** Upper bound for each parsed message body before it is stored in React state. */
+  maxMessageChars?: number;
+  /** Upper bound for a raw JSONL line. Lines above this are skipped while streaming. */
+  maxLineBytes?: number;
+}
+
+function truncateMessageContent(msg: SessionMessage, maxChars: number): SessionMessage {
+  if (msg.content.length <= maxChars) return msg;
+  return { ...msg, content: msg.content.slice(0, maxChars) + TRUNCATED_MESSAGE_SUFFIX };
+}
+
+async function* readJsonlLines(filePath: string, maxLineBytes: number): AsyncGenerator<string> {
+  const stream = fs.createReadStream(filePath, { encoding: "utf-8", highWaterMark: 64 * 1024 });
+  let buffered = "";
+  let bufferedBytes = 0;
+  let skippingLongLine = false;
+
+  try {
+    for await (const chunk of stream) {
+      const text = String(chunk);
+      let start = 0;
+
+      while (start < text.length) {
+        const newlineIndex = text.indexOf("\n", start);
+        const segmentEnd = newlineIndex === -1 ? text.length : newlineIndex;
+        const segment = text.slice(start, segmentEnd);
+
+        if (!skippingLongLine) {
+          buffered += segment;
+          bufferedBytes += Buffer.byteLength(segment, "utf-8");
+          if (bufferedBytes > maxLineBytes) {
+            buffered = "";
+            bufferedBytes = 0;
+            skippingLongLine = true;
+          }
+        }
+
+        if (newlineIndex === -1) break;
+
+        if (skippingLongLine) {
+          skippingLongLine = false;
+        } else {
+          yield buffered.endsWith("\r") ? buffered.slice(0, -1) : buffered;
+        }
+        buffered = "";
+        bufferedBytes = 0;
+        start = newlineIndex + 1;
+      }
+    }
+
+    if (!skippingLongLine && buffered) {
+      yield buffered.endsWith("\r") ? buffered.slice(0, -1) : buffered;
+    }
+  } finally {
+    stream.destroy();
+  }
+}
+
 /**
- * Load all messages for a single session. Reads the entire JSONL file.
+ * Load messages for a single session without reading the whole JSONL file into memory.
  * Called lazily when the user opens the detail view.
  */
-export function loadSessionMessages(meta: SessionMeta): SessionMessage[] {
-  let content: string;
-  try {
-    content = fs.readFileSync(meta.filePath, "utf-8");
-  } catch (e) {
-    warn(`failed to read session ${meta.filePath}:`, e);
-    return [];
-  }
-
+export async function loadSessionMessages(
+  meta: SessionMeta,
+  options: LoadSessionMessagesOptions = {},
+): Promise<SessionMessage[]> {
   const adapter = getAdapter(getFormatForSource(meta.source));
   const messages: SessionMessage[] = [];
+  const maxMessages = options.maxMessages ?? DEFAULT_MAX_LOADED_MESSAGES;
+  const maxMessageChars = options.maxMessageChars ?? DEFAULT_MAX_MESSAGE_CHARS;
+  const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_JSONL_LINE_BYTES;
 
-  for (const line of content.split("\n")) {
-    if (!line.trim()) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
+  try {
+    for await (const line of readJsonlLines(meta.filePath, maxLineBytes)) {
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const msg = adapter.parseLine(parsed);
+      if (!msg) continue;
+      // Suppress auto-injected user-role events (system reminders, hook output, slash-command
+      // wrappers, interrupted-by-user markers, ...) so the conversation view shows only what
+      // the user actually typed and the assistant actually said.
+      if (msg.role === "user" && !isMeaningfulUserMessage(msg.content)) continue;
+      messages.push(truncateMessageContent(msg, maxMessageChars));
+      if (messages.length >= maxMessages) break;
     }
-    const msg = adapter.parseLine(parsed);
-    if (!msg) continue;
-    // Suppress auto-injected user-role events (system reminders, hook output, slash-command
-    // wrappers, interrupted-by-user markers, ...) so the conversation view shows only what
-    // the user actually typed and the assistant actually said.
-    if (msg.role === "user" && !isMeaningfulUserMessage(msg.content)) continue;
-    messages.push(msg);
+  } catch (e) {
+    warn(`failed to read session ${meta.filePath}:`, e);
+    return messages;
   }
 
   return messages;
@@ -534,58 +619,6 @@ function buildSnippet(text: string, lowerQuery: string, queryLength: number): st
 }
 
 /**
- * `null` = tried and failed; `undefined` = not yet tried.
- */
-let cachedRipgrepPath: string | undefined | null;
-
-/**
- * Locate a usable `rg` binary.
- *
- * Strategy: `prepare-assets` copies the postinstalled binary into `assets/rg`,
- * and `ray build` ships that next to the bundled JS — so the primary candidate
- * is `__dirname/assets/rg`. We then fall back to local `node_modules` (dev mode)
- * and a small fixed list of system locations.
- *
- * No subprocess probing per candidate: `fs.accessSync(X_OK)` keeps cold-start
- * under ~5ms even on the worst-case fall-through. We don't scan `$PATH` —
- * a typical `$PATH` has 20+ directories and the previous design did a child
- * spawn per miss (1s timeout each), which froze the worker for tens of seconds
- * when ripgrep was absent.
- */
-function resolveRipgrepPath(): string | undefined {
-  if (cachedRipgrepPath !== undefined) return cachedRipgrepPath ?? undefined;
-
-  const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
-  const extensionDir = typeof __dirname === "string" ? __dirname : process.cwd();
-
-  const candidates = [
-    // Bundled with the extension (preferred — written here by scripts/copy-ripgrep.cjs
-    // and packaged into the .ray bundle by `ray build`).
-    path.join(extensionDir, "assets", binaryName),
-    path.join(process.cwd(), "assets", binaryName),
-    // Source location during local dev.
-    path.join(process.cwd(), "node_modules", "@vscode", "ripgrep", "bin", binaryName),
-    // System fallbacks: Apple-Silicon brew → Intel brew → /usr/local → /usr/bin.
-    "/opt/homebrew/bin/rg",
-    "/usr/local/bin/rg",
-    "/usr/bin/rg",
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      cachedRipgrepPath = candidate;
-      return candidate;
-    } catch {
-      // try next
-    }
-  }
-
-  cachedRipgrepPath = null;
-  return undefined;
-}
-
-/**
  * Search content across all session files using ripgrep.
  * Returns a map of filePath -> snippet. Limited to `limit` matches.
  *
@@ -595,17 +628,35 @@ function resolveRipgrepPath(): string | undefined {
  */
 const execFileAsync = promisify(execFile);
 
+export function buildRipgrepArgs(query: string, searchDirs: string[]): string[] {
+  return [
+    "--fixed-strings",
+    "--ignore-case",
+    "--max-count",
+    "1",
+    "--max-columns",
+    "2048",
+    "--max-columns-preview",
+    "--max-filesize",
+    "20M",
+    "--glob",
+    "*.jsonl",
+    "--no-heading",
+    "--with-filename",
+    "--line-number",
+    "--",
+    query,
+    ...searchDirs,
+  ];
+}
+
 // Returns tuples (not a Map) because the result flows through useCachedPromise's
 // JSON-serializing cache; a Map rehydrates as {} and breaks iteration.
 export async function searchSessionContent(query: string, limit: number): Promise<Array<[string, string]>> {
   const results = new Map<string, string>();
   if (!query.trim() || query.length < 2) return [];
 
-  const rgPath = resolveRipgrepPath();
-  if (!rgPath) {
-    warn("ripgrep binary missing");
-    return [];
-  }
+  const rgPath = await ensureRipgrep();
 
   const homeDir = os.homedir();
   const searchDirs = [path.join(homeDir, ".claude", "projects"), path.join(homeDir, ".codex", "sessions")].filter((d) =>
@@ -615,29 +666,11 @@ export async function searchSessionContent(query: string, limit: number): Promis
 
   let output: string;
   try {
-    const { stdout } = await execFileAsync(
-      rgPath,
-      [
-        "--fixed-strings",
-        "--ignore-case",
-        "--max-count",
-        "1",
-        "--max-filesize",
-        "20M",
-        "--glob",
-        "*.jsonl",
-        "--no-heading",
-        "--with-filename",
-        "--line-number",
-        query,
-        ...searchDirs,
-      ],
-      {
-        encoding: "utf-8",
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: 15000,
-      },
-    );
+    const { stdout } = await execFileAsync(rgPath, buildRipgrepArgs(query, searchDirs), {
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 15000,
+    });
     output = stdout;
   } catch (err) {
     // ripgrep exits with code 1 when there are no matches — that's not an error.
@@ -646,7 +679,7 @@ export async function searchSessionContent(query: string, limit: number): Promis
     if (e.code === 1) return [];
     const stderrText = typeof e.stderr === "string" ? e.stderr : e.stderr?.toString();
     warn(`ripgrep search failed (code=${e.code}):`, stderrText || e.message);
-    return [];
+    throw new Error(stderrText || e.message || "ripgrep search failed");
   }
 
   const lowerQuery = query.toLowerCase();
